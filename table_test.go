@@ -43,7 +43,7 @@ func TestTableIsArray(t *testing.T) {
 func TestTableArray(t *testing.T) {
 	tbl := MustParseTable(`{1, "two", true, nil}`)
 	got := tbl.Array()
-	want := []interface{}{int64(1), "two", true, nil}
+	want := []any{int64(1), "two", true, nil}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected Array(); got %#v; want %#v", got, want)
 	}
@@ -56,7 +56,7 @@ func TestTableArray(t *testing.T) {
 func TestTableMap(t *testing.T) {
 	tbl := MustParseTable(`{1, 2, x = "y"}`)
 	got := tbl.Map()
-	want := map[string]interface{}{
+	want := map[string]any{
 		"1": int64(1),
 		"2": int64(2),
 		"x": "y",
@@ -67,15 +67,15 @@ func TestTableMap(t *testing.T) {
 }
 
 func TestTableInterface(t *testing.T) {
-	if got := MustParseTable(`{1, 2, 3}`).Interface(); !reflect.DeepEqual(got, []interface{}{int64(1), int64(2), int64(3)}) {
+	if got := MustParseTable(`{1, 2, 3}`).Interface(); !reflect.DeepEqual(got, []any{int64(1), int64(2), int64(3)}) {
 		t.Fatalf("unexpected Interface() for an array table: %#v", got)
 	}
 
-	if got := MustParseTable(`{a = 1}`).Interface(); !reflect.DeepEqual(got, map[string]interface{}{"a": int64(1)}) {
+	if got := MustParseTable(`{a = 1}`).Interface(); !reflect.DeepEqual(got, map[string]any{"a": int64(1)}) {
 		t.Fatalf("unexpected Interface() for a hash table: %#v", got)
 	}
 
-	if got := MustParseTable(`{}`).Interface(); !reflect.DeepEqual(got, map[string]interface{}{}) {
+	if got := MustParseTable(`{}`).Interface(); !reflect.DeepEqual(got, map[string]any{}) {
 		t.Fatalf("unexpected Interface() for an empty table: %#v", got)
 	}
 }
@@ -85,8 +85,8 @@ func TestTableGet(t *testing.T) {
 
 	cases := []struct {
 		name string
-		key  interface{}
-		want interface{}
+		key  any
+		want any
 		ok   bool
 	}{
 		{"array index", 1, int64(10), true},
@@ -164,13 +164,13 @@ func TestTableDuplicateKeysKeepFirstPosition(t *testing.T) {
 func TestTablePositionalFieldOverridesEarlierKey(t *testing.T) {
 	cases := []struct {
 		src  string
-		want []interface{}
+		want []any
 	}{
-		{`{1, [1] = 2}`, []interface{}{int64(2)}},
-		{`{[1] = 2, 1}`, []interface{}{int64(1)}},
+		{`{1, [1] = 2}`, []any{int64(2)}},
+		{`{[1] = 2, 1}`, []any{int64(1)}},
 		// The positional fields receive indices 1 and 2; the explicit
 		// [1] = "b" overrides the first positional field.
-		{`{"a", [1] = "b", "c"}`, []interface{}{"b", "c"}},
+		{`{"a", [1] = "b", "c"}`, []any{"b", "c"}},
 	}
 	for _, tc := range cases {
 		got, err := Parse(tc.src)
@@ -189,7 +189,7 @@ func TestTableIntegerValuedFloatKeyIsNormalized(t *testing.T) {
 	if got := tbl.Len(); got != 1 {
 		t.Fatalf("Len() = %d; want 1 (integer and integral float keys must collapse)", got)
 	}
-	for _, key := range []interface{}{1, int64(1), 1.0, float64(1)} {
+	for _, key := range []any{1, int64(1), 1.0, float64(1)} {
 		got, ok := tbl.Get(key)
 		if !ok || got != "b" {
 			t.Fatalf("Get(%#v) = (%#v, %v); want (%q, true)", key, got, ok, "b")
@@ -206,9 +206,9 @@ func TestTableNestedValuesAreRichTables(t *testing.T) {
 	}
 
 	got := tbl.Interface()
-	want := map[string]interface{}{
-		"a": []interface{}{int64(1), int64(2)},
-		"b": map[string]interface{}{"c": int64(3)},
+	want := map[string]any{
+		"a": []any{int64(1), int64(2)},
+		"b": map[string]any{"c": int64(3)},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected Interface(); got %#v; want %#v", got, want)
@@ -245,7 +245,7 @@ func TestTableStringHandlesScalarValues(t *testing.T) {
 func TestToInterface(t *testing.T) {
 	tbl := MustParseTable(`{1, 2}`)
 
-	if got := ToInterface(tbl); !reflect.DeepEqual(got, []interface{}{int64(1), int64(2)}) {
+	if got := ToInterface(tbl); !reflect.DeepEqual(got, []any{int64(1), int64(2)}) {
 		t.Fatalf("unexpected ToInterface() for a table: %#v", got)
 	}
 	if got := ToInterface(int64(5)); got != int64(5) {
@@ -258,7 +258,7 @@ func TestToInterface(t *testing.T) {
 
 func TestKeyToString(t *testing.T) {
 	cases := []struct {
-		key  interface{}
+		key  any
 		want string
 	}{
 		{"a", "a"},
@@ -277,8 +277,8 @@ func TestKeyToString(t *testing.T) {
 
 func TestNormalizeKey(t *testing.T) {
 	cases := []struct {
-		key    interface{}
-		want   interface{}
+		key    any
+		want   any
 		wantOK bool
 	}{
 		{"s", "s", true},
@@ -309,16 +309,36 @@ func TestIsIdentifier(t *testing.T) {
 		{"a", true},
 		{"_a1", true},
 		{"A_b9", true},
+		{"globalish", true}, // contains a reserved word but is not one
+		{"endgame", true},
 		{"", false},
 		{"1a", false},
 		{"a-b", false},
+		{"a b", false},
 		{"nil", false},
 		{"true", false},
 		{"return", false},
+		{"end", false},
+		{"global", false},
 	}
 	for _, tc := range cases {
 		if got := isIdentifier(tc.s); got != tc.want {
 			t.Fatalf("isIdentifier(%q) = %v; want %v", tc.s, got, tc.want)
+		}
+	}
+}
+
+// TestIsIdentifierRejectsEveryReservedWord guards the encoder: a key that is a
+// reserved word must be written in bracket form, because no Lua version
+// accepts "end = 1". The expected count pins the 5.1-5.5 union of reserved
+// words: the 22 of Lua 5.4 plus "global", added by Lua 5.5.
+func TestIsIdentifierRejectsEveryReservedWord(t *testing.T) {
+	if len(reservedWords) != 23 {
+		t.Fatalf("unexpected number of reserved words: %d; want 23 (Lua 5.1-5.5)", len(reservedWords))
+	}
+	for word := range reservedWords {
+		if isIdentifier(word) {
+			t.Fatalf("isIdentifier(%q) = true; reserved words must be quoted", word)
 		}
 	}
 }

@@ -2,11 +2,12 @@ package luatable
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
 // parseGeneric is a test helper that parses src and fails the test on error.
-func parseGeneric(t *testing.T, src string) interface{} {
+func parseGeneric(t *testing.T, src string) any {
 	t.Helper()
 
 	v, err := Parse(src)
@@ -20,26 +21,26 @@ func TestParseArrayTables(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		want interface{}
+		want any
 	}{
-		{"empty", "{}", map[string]interface{}{}},
-		{"single integer", "{1}", []interface{}{int64(1)}},
-		{"mixed scalars", `{1, "two", true, false, nil}`, []interface{}{int64(1), "two", true, false, nil}},
-		{"nested arrays", "{{1, 2}, {3, 4}}", []interface{}{
-			[]interface{}{int64(1), int64(2)},
-			[]interface{}{int64(3), int64(4)},
+		{"empty", "{}", map[string]any{}},
+		{"single integer", "{1}", []any{int64(1)}},
+		{"mixed scalars", `{1, "two", true, false, nil}`, []any{int64(1), "two", true, false, nil}},
+		{"nested arrays", "{{1, 2}, {3, 4}}", []any{
+			[]any{int64(1), int64(2)},
+			[]any{int64(3), int64(4)},
 		}},
-		{"trailing comma", "{1, 2,}", []interface{}{int64(1), int64(2)}},
-		{"semicolon separators", "{1; 2; 3;}", []interface{}{int64(1), int64(2), int64(3)}},
-		{"mixed separators", "{1, 2; 3}", []interface{}{int64(1), int64(2), int64(3)}},
-		{"floats", "{1.5, .5, 1.}", []interface{}{1.5, 0.5, 1.0}},
-		{"negative numbers", "{-1, -2.5, - 3}", []interface{}{int64(-1), -2.5, int64(-3)}},
-		{"parenthesized literals", "{(1), (2.5), ((3))}", []interface{}{int64(1), 2.5, int64(3)}},
-		{"hex numbers", "{0xFF, 0x1p4}", []interface{}{int64(255), 16.0}},
-		{"strings", `{"a", 'b', [[c]]}`, []interface{}{"a", "b", "c"}},
-		{"array with nil hole", "{1, nil, 3}", []interface{}{int64(1), nil, int64(3)}},
-		{"explicit array indices", "{[1] = 'a', [2] = 'b'}", []interface{}{"a", "b"}},
-		{"deeply nested arrays", "{{{1}}}", []interface{}{[]interface{}{[]interface{}{int64(1)}}}},
+		{"trailing comma", "{1, 2,}", []any{int64(1), int64(2)}},
+		{"semicolon separators", "{1; 2; 3;}", []any{int64(1), int64(2), int64(3)}},
+		{"mixed separators", "{1, 2; 3}", []any{int64(1), int64(2), int64(3)}},
+		{"floats", "{1.5, .5, 1.}", []any{1.5, 0.5, 1.0}},
+		{"negative numbers", "{-1, -2.5, - 3}", []any{int64(-1), -2.5, int64(-3)}},
+		{"parenthesized literals", "{(1), (2.5), ((3))}", []any{int64(1), 2.5, int64(3)}},
+		{"hex numbers", "{0xFF, 0x1p4}", []any{int64(255), 16.0}},
+		{"strings", `{"a", 'b', [[c]]}`, []any{"a", "b", "c"}},
+		{"array with nil hole", "{1, nil, 3}", []any{int64(1), nil, int64(3)}},
+		{"explicit array indices", "{[1] = 'a', [2] = 'b'}", []any{"a", "b"}},
+		{"deeply nested arrays", "{{{1}}}", []any{[]any{[]any{int64(1)}}}},
 	}
 
 	for _, tc := range cases {
@@ -56,27 +57,27 @@ func TestParseHashTables(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		want map[string]interface{}
+		want map[string]any
 	}{
-		{"identifier keys", `{a = 1, b = "x"}`, map[string]interface{}{"a": int64(1), "b": "x"}},
-		{"bracket string key", `{["k"] = 1}`, map[string]interface{}{"k": int64(1)}},
-		{"bracket long string key", `{[ [[k]] ] = 1}`, map[string]interface{}{"k": int64(1)}},
-		{"numeric key", `{[10] = "v"}`, map[string]interface{}{"10": "v"}},
-		{"negative numeric key", `{[-3] = "v"}`, map[string]interface{}{"-3": "v"}},
-		{"boolean keys", `{[true] = 1, [false] = 2}`, map[string]interface{}{"true": int64(1), "false": int64(2)}},
-		{"float key", `{[1.5] = "x"}`, map[string]interface{}{"1.5": "x"}},
-		{"integral float key normalizes", `{[2.0] = "x"}`, map[string]interface{}{"2": "x"}},
-		{"mixed array and hash", `{1, 2, x = 3}`, map[string]interface{}{"1": int64(1), "2": int64(2), "x": int64(3)}},
-		{"sparse numeric keys", `{[1] = "a", [3] = "c"}`, map[string]interface{}{"1": "a", "3": "c"}},
-		{"nested hash", `{a = {b = {c = 1}}}`, map[string]interface{}{
-			"a": map[string]interface{}{"b": map[string]interface{}{"c": int64(1)}},
+		{"identifier keys", `{a = 1, b = "x"}`, map[string]any{"a": int64(1), "b": "x"}},
+		{"bracket string key", `{["k"] = 1}`, map[string]any{"k": int64(1)}},
+		{"bracket long string key", `{[ [[k]] ] = 1}`, map[string]any{"k": int64(1)}},
+		{"numeric key", `{[10] = "v"}`, map[string]any{"10": "v"}},
+		{"negative numeric key", `{[-3] = "v"}`, map[string]any{"-3": "v"}},
+		{"boolean keys", `{[true] = 1, [false] = 2}`, map[string]any{"true": int64(1), "false": int64(2)}},
+		{"float key", `{[1.5] = "x"}`, map[string]any{"1.5": "x"}},
+		{"integral float key normalizes", `{[2.0] = "x"}`, map[string]any{"2": "x"}},
+		{"mixed array and hash", `{1, 2, x = 3}`, map[string]any{"1": int64(1), "2": int64(2), "x": int64(3)}},
+		{"sparse numeric keys", `{[1] = "a", [3] = "c"}`, map[string]any{"1": "a", "3": "c"}},
+		{"nested hash", `{a = {b = {c = 1}}}`, map[string]any{
+			"a": map[string]any{"b": map[string]any{"c": int64(1)}},
 		}},
-		{"table values", `{list = {1, 2}, map = {k = "v"}}`, map[string]interface{}{
-			"list": []interface{}{int64(1), int64(2)},
-			"map":  map[string]interface{}{"k": "v"},
+		{"table values", `{list = {1, 2}, map = {k = "v"}}`, map[string]any{
+			"list": []any{int64(1), int64(2)},
+			"map":  map[string]any{"k": "v"},
 		}},
-		{"escaped string key", `{["a\nb"] = 1}`, map[string]interface{}{"a\nb": int64(1)}},
-		{"keyword-like identifier values are rejected elsewhere", `{a = "nil"}`, map[string]interface{}{"a": "nil"}},
+		{"escaped string key", `{["a\nb"] = 1}`, map[string]any{"a\nb": int64(1)}},
+		{"keyword-like identifier values are rejected elsewhere", `{a = "nil"}`, map[string]any{"a": "nil"}},
 	}
 
 	for _, tc := range cases {
@@ -99,7 +100,7 @@ func TestParseCommentsAreIgnored(t *testing.T) {
 		]==]
 		c = 3, --[=[ another long comment ]=]
 	}`
-	want := map[string]interface{}{"a": int64(1), "b": int64(2), "c": int64(3)}
+	want := map[string]any{"a": int64(1), "b": int64(2), "c": int64(3)}
 
 	got := parseGeneric(t, src)
 	if !reflect.DeepEqual(got, want) {
@@ -109,21 +110,21 @@ func TestParseCommentsAreIgnored(t *testing.T) {
 
 func TestParseCommentOnlyTable(t *testing.T) {
 	got := parseGeneric(t, "{ --[[ nothing here ]] }")
-	if !reflect.DeepEqual(got, map[string]interface{}{}) {
+	if !reflect.DeepEqual(got, map[string]any{}) {
 		t.Fatalf("unexpected value: %#v", got)
 	}
 }
 
 func TestParseSurroundingWhitespaceAndComments(t *testing.T) {
 	got := parseGeneric(t, "\n\t -- leading comment\n { 1, 2 }\n -- trailing comment\n")
-	if !reflect.DeepEqual(got, []interface{}{int64(1), int64(2)}) {
+	if !reflect.DeepEqual(got, []any{int64(1), int64(2)}) {
 		t.Fatalf("unexpected value: %#v", got)
 	}
 }
 
 func TestParseTrailingSemicolon(t *testing.T) {
 	got := parseGeneric(t, "{1, 2};")
-	if !reflect.DeepEqual(got, []interface{}{int64(1), int64(2)}) {
+	if !reflect.DeepEqual(got, []any{int64(1), int64(2)}) {
 		t.Fatalf("unexpected value: %#v", got)
 	}
 }
@@ -142,7 +143,7 @@ func TestParseLongStringValues(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := parseGeneric(t, tc.src).(map[string]interface{})
+			got := parseGeneric(t, tc.src).(map[string]any)
 			if got["a"] != tc.want {
 				t.Fatalf("unexpected value; got %q; want %q", got["a"], tc.want)
 			}
@@ -157,7 +158,7 @@ func TestParseEmptyTableBranches(t *testing.T) {
 			// "{;}" is not a valid Lua table; skip it.
 			continue
 		}
-		if !reflect.DeepEqual(got, map[string]interface{}{}) {
+		if !reflect.DeepEqual(got, map[string]any{}) {
 			t.Fatalf("unexpected value for %q: %#v", src, got)
 		}
 	}
@@ -222,8 +223,8 @@ func TestParseNumericKeyTypes(t *testing.T) {
 	}
 
 	cases := []struct {
-		key  interface{}
-		want interface{}
+		key  any
+		want any
 	}{
 		{1, "one"},
 		{2, "two"},
@@ -257,10 +258,10 @@ func TestParseDoesNotMutateParserStateBetweenCalls(t *testing.T) {
 		t.Fatalf("unexpected error: %s", err)
 	}
 
-	if !reflect.DeepEqual(first, []interface{}{int64(1), int64(2)}) {
+	if !reflect.DeepEqual(first, []any{int64(1), int64(2)}) {
 		t.Fatalf("unexpected first result: %#v", first)
 	}
-	if !reflect.DeepEqual(second, map[string]interface{}{"a": int64(1)}) {
+	if !reflect.DeepEqual(second, map[string]any{"a": int64(1)}) {
 		t.Fatalf("unexpected second result: %#v", second)
 	}
 }
@@ -300,11 +301,11 @@ func TestParseDeeplyNestedTables(t *testing.T) {
 	const depth = 100
 
 	src := ""
-	for i := 0; i < depth; i++ {
+	for range depth {
 		src += "{"
 	}
 	src += "1"
-	for i := 0; i < depth; i++ {
+	for range depth {
 		src += "}"
 	}
 
@@ -315,14 +316,14 @@ func TestParseDeeplyNestedTables(t *testing.T) {
 
 	// Walk down the nested arrays.
 	current := got
-	for i := 0; i < depth-1; i++ {
-		arr, ok := current.([]interface{})
+	for i := range depth - 1 {
+		arr, ok := current.([]any)
 		if !ok {
-			t.Fatalf("level %d is %T; want []interface{}", i, current)
+			t.Fatalf("level %d is %T; want []any", i, current)
 		}
 		current = arr[0]
 	}
-	if !reflect.DeepEqual(current, []interface{}{int64(1)}) {
+	if !reflect.DeepEqual(current, []any{int64(1)}) {
 		t.Fatalf("unexpected innermost value: %#v", current)
 	}
 }
@@ -360,7 +361,7 @@ func TestMustParsePanicsOnError(t *testing.T) {
 
 func TestMustParseReturnsValue(t *testing.T) {
 	got := MustParse("{1, 2}")
-	if !reflect.DeepEqual(got, []interface{}{int64(1), int64(2)}) {
+	if !reflect.DeepEqual(got, []any{int64(1), int64(2)}) {
 		t.Fatalf("unexpected value: %#v", got)
 	}
 }
@@ -369,7 +370,7 @@ func TestParseArrayContinuationAfterHashField(t *testing.T) {
 	// Positional fields continue the array sequence regardless of interleaved
 	// hash fields, exactly like Lua.
 	got := parseGeneric(t, `{a = "x", 10, b = "y", 20}`)
-	want := map[string]interface{}{
+	want := map[string]any{
 		"a": "x",
 		"b": "y",
 		"1": int64(10),
@@ -382,7 +383,70 @@ func TestParseArrayContinuationAfterHashField(t *testing.T) {
 
 func TestParseDeprecatedSemicolonSeparator(t *testing.T) {
 	got := parseGeneric(t, "{1; 2,}")
-	if !reflect.DeepEqual(got, []interface{}{int64(1), int64(2)}) {
+	if !reflect.DeepEqual(got, []any{int64(1), int64(2)}) {
 		t.Fatalf("unexpected value: %#v", got)
 	}
+}
+
+// TestParseReservedWordKeys documents the keyword policy: by default the parser
+// is lenient and accepts reserved words as bare keys, while Parser.StrictKeywords
+// rejects them exactly like the reference implementation.
+func TestParseReservedWordKeys(t *testing.T) {
+	t.Run("lenient by default", func(t *testing.T) {
+		got, err := Parse(`{end = 1, function = 2}`)
+		if err != nil {
+			t.Fatalf("the default parser accepts reserved word keys: %s", err)
+		}
+		want := map[string]any{"end": int64(1), "function": int64(2)}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("unexpected value: %#v", got)
+		}
+	})
+
+	t.Run("bracket form is always accepted", func(t *testing.T) {
+		for _, p := range []*Parser{{}, {StrictKeywords: true}} {
+			got, err := p.Parse(`{["end"] = 1, ["global"] = 2}`)
+			if err != nil {
+				t.Fatalf("the bracket form must always be accepted: %s", err)
+			}
+			want := map[string]any{"end": int64(1), "global": int64(2)}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("unexpected value: %#v", got)
+			}
+		}
+	})
+
+	t.Run("strict rejects every reserved word", func(t *testing.T) {
+		strict := &Parser{StrictKeywords: true}
+
+		for word := range reservedWords {
+			src := "{" + word + " = 1}"
+			if _, err := strict.Parse(src); err == nil {
+				t.Fatalf("strict mode must reject %q", src)
+			}
+		}
+	})
+
+	t.Run("strict error message", func(t *testing.T) {
+		strict := &Parser{StrictKeywords: true}
+		_, err := strict.Parse(`{end = 1}`)
+		if err == nil {
+			t.Fatal("expecting an error")
+		}
+		if !strings.Contains(err.Error(), "reserved word") {
+			t.Fatalf("unexpected error message: %s", err)
+		}
+	})
+
+	t.Run("strict accepts neighbouring identifiers", func(t *testing.T) {
+		strict := &Parser{StrictKeywords: true}
+		got, err := strict.Parse(`{endgame = 1, globalish = 2}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err)
+		}
+		want := map[string]any{"endgame": int64(1), "globalish": int64(2)}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("unexpected value: %#v", got)
+		}
+	})
 }

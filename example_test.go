@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	luatable "github.com/arizati/go-luatable"
+	luatable "github.com/arizati/luatable"
 )
 
 func ExampleParse() {
@@ -14,7 +14,7 @@ func ExampleParse() {
 		return
 	}
 
-	table := value.(map[string]interface{})
+	table := value.(map[string]any)
 	fmt.Println(table["name"])
 	fmt.Println(table["items"])
 
@@ -29,7 +29,7 @@ func ExampleParse_array() {
 		fmt.Println("error:", err)
 		return
 	}
-	fmt.Println(value.([]interface{}))
+	fmt.Println(value.([]any))
 
 	// Output:
 	// [a b c]

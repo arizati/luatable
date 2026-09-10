@@ -9,7 +9,7 @@ func TestParseLuaNumber(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		cases := []struct {
 			src  string
-			want interface{}
+			want any
 		}{
 			{"0", int64(0)},
 			{"123", int64(123)},

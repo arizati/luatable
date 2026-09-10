@@ -18,6 +18,15 @@ type Parser struct {
 	// parsing Lua module files of the form "return { ... }".
 	AllowReturnPrefix bool
 
+	// StrictKeywords makes the parser reject Lua reserved words used as bare
+	// table keys, matching the reference implementation: "{end = 1}" is invalid
+	// Lua and has to be written as '{["end"] = 1}'.
+	//
+	// The zero value keeps the default lenient behaviour, which accepts such
+	// keys so that slightly off-spec data files still load. The encoder is
+	// always strict, because its output must be valid Lua.
+	StrictKeywords bool
+
 	src string
 	lex lexer
 }
@@ -26,7 +35,7 @@ type Parser struct {
 // returns the generic Go representation of that table.
 //
 // See the package documentation for the mapping between Lua and Go values.
-func (p *Parser) Parse(s string) (interface{}, error) {
+func (p *Parser) Parse(s string) (any, error) {
 	t, err := p.ParseTable(s)
 	if err != nil {
 		return nil, err
@@ -35,7 +44,7 @@ func (p *Parser) Parse(s string) (interface{}, error) {
 }
 
 // ParseBytes parses b as a Lua table constructor. See Parse.
-func (p *Parser) ParseBytes(b []byte) (interface{}, error) {
+func (p *Parser) ParseBytes(b []byte) (any, error) {
 	return p.Parse(string(b))
 }
 
@@ -171,6 +180,10 @@ func (p *Parser) parseField(tb *tableBuilder, depth int) error {
 			return p.errorf(tok.offset,
 				"unsupported expression %q; expected a literal, a nested table or an 'name = value' field", tok.text)
 		}
+		if p.StrictKeywords && reservedWords[tok.text] {
+			return p.errorf(tok.offset,
+				"reserved word %q cannot be used as a table key; write [%q] instead", tok.text, tok.text)
+		}
 		p.lex.next()
 		if err := p.lex.err; err != nil {
 			return err
@@ -242,7 +255,7 @@ func (p *Parser) parseField(tb *tableBuilder, depth int) error {
 // depth bounds the total recursion, covering nested tables as well as chains
 // of unary minus and parentheses, so that hostile input cannot exhaust the
 // goroutine stack.
-func (p *Parser) parseValue(depth int) (interface{}, error) {
+func (p *Parser) parseValue(depth int) (any, error) {
 	if depth > p.maxDepth() {
 		return nil, p.errorf(p.lex.tok.offset, "expression nesting depth exceeds the maximum of %d", p.maxDepth())
 	}
@@ -342,7 +355,7 @@ func (p *Parser) parseValue(depth int) (interface{}, error) {
 }
 
 // negateNumber returns the arithmetic negation of a numeric value.
-func negateNumber(v interface{}) (interface{}, bool) {
+func negateNumber(v any) (any, bool) {
 	switch n := v.(type) {
 	case int64:
 		if n == math.MinInt64 {
@@ -370,6 +383,6 @@ func (p *Parser) describeToken() string {
 	}
 }
 
-func (p *Parser) errorf(offset int, format string, args ...interface{}) error {
+func (p *Parser) errorf(offset int, format string, args ...any) error {
 	return newSyntaxError(p.src, offset, format, args...)
 }

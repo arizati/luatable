@@ -9,21 +9,21 @@ var handyPool ParserPool
 // representation.
 //
 // Reuse a Parser when parsing repeatedly for better performance.
-func Parse(s string) (interface{}, error) {
+func Parse(s string) (any, error) {
 	p := handyPool.Get()
 	defer handyPool.Put(p)
 	return p.Parse(s)
 }
 
 // ParseBytes parses b as a single Lua table constructor. See Parse.
-func ParseBytes(b []byte) (interface{}, error) {
+func ParseBytes(b []byte) (any, error) {
 	p := handyPool.Get()
 	defer handyPool.Put(p)
 	return p.ParseBytes(b)
 }
 
 // MustParse is like Parse but panics when s cannot be parsed.
-func MustParse(s string) interface{} {
+func MustParse(s string) any {
 	v, err := Parse(s)
 	if err != nil {
 		panic(err)
@@ -32,7 +32,7 @@ func MustParse(s string) interface{} {
 }
 
 // MustParseBytes is like ParseBytes but panics when b cannot be parsed.
-func MustParseBytes(b []byte) interface{} {
+func MustParseBytes(b []byte) any {
 	v, err := ParseBytes(b)
 	if err != nil {
 		panic(err)

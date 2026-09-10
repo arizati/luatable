@@ -9,7 +9,7 @@ import (
 func buildBenchmarkInput(fields int) string {
 	var b strings.Builder
 	b.WriteString("{\n")
-	for i := 0; i < fields; i++ {
+	for i := range fields {
 		b.WriteString("\titem")
 		b.WriteString(strconv.Itoa(i))
 		b.WriteString(` = { id = `)
@@ -65,6 +65,52 @@ func BenchmarkParseBytes(b *testing.B) {
 
 	for b.Loop() {
 		if _, err := p.ParseBytes(src); err != nil {
+			b.Fatalf("unexpected error: %s", err)
+		}
+	}
+}
+
+func BenchmarkMarshal(b *testing.B) {
+	for name, src := range benchmarkInputs {
+		b.Run(name, func(b *testing.B) {
+			v := MustParse(src)
+			b.SetBytes(int64(len(src)))
+
+			for b.Loop() {
+				if _, err := Marshal(v); err != nil {
+					b.Fatalf("unexpected error: %s", err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkMarshalIndent(b *testing.B) {
+	src := benchmarkInputs["medium"]
+	v := MustParse(src)
+
+	b.SetBytes(int64(len(src)))
+
+	for b.Loop() {
+		if _, err := MarshalIndent(v, "  "); err != nil {
+			b.Fatalf("unexpected error: %s", err)
+		}
+	}
+}
+
+func BenchmarkMarshalTable(b *testing.B) {
+	src := benchmarkInputs["medium"]
+
+	var p Parser
+	tbl, err := p.ParseTable(src)
+	if err != nil {
+		b.Fatalf("unexpected error: %s", err)
+	}
+
+	b.SetBytes(int64(len(src)))
+
+	for b.Loop() {
+		if _, err := Marshal(tbl); err != nil {
 			b.Fatalf("unexpected error: %s", err)
 		}
 	}

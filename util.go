@@ -6,15 +6,10 @@ package luatable
 // It is only invoked while reporting errors, so the linear scan is not on the
 // hot path and keeps the lexer free of bookkeeping state.
 func positionAt(src string, offset int) (line, column int) {
-	if offset < 0 {
-		offset = 0
-	}
-	if offset > len(src) {
-		offset = len(src)
-	}
+	offset = min(max(offset, 0), len(src))
 
 	line, column = 1, 1
-	for i := 0; i < offset; i++ {
+	for i := range offset {
 		if src[i] == '\n' {
 			line++
 			column = 1

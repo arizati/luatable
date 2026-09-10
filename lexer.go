@@ -370,6 +370,12 @@ func isNameChar(c byte) bool {
 	return isNameStart(c) || isDigit(c)
 }
 
+// keywords lists the words the parser must recognise as primitives: nil, true
+// and false are literal values and return introduces a module file.
+//
+// The set is deliberately smaller than Lua's reserved words. A lenient data
+// parser accepts "end = 1" as a string key even though every Lua
+// implementation rejects it; set Parser.StrictKeywords to reject such keys.
 var keywords = map[string]bool{
 	"nil":    true,
 	"true":   true,
@@ -381,8 +387,26 @@ func isKeyword(s string) bool {
 	return keywords[s]
 }
 
-// isIdentifier reports whether s is a plain Lua identifier that may be written
-// without brackets in a table constructor.
+// reservedWords lists every reserved word of Lua 5.1 through Lua 5.5.
+//
+// The set is the union over all supported versions, which is conservative in
+// the right direction: writing '["goto"]' or '["global"]' is valid in every
+// version, whereas a bare "goto = 1" or "global = 1" is rejected by some of
+// them. "goto" became reserved in Lua 5.2 and "global" in Lua 5.5:
+//
+//	and break do else elseif end false for function global goto if
+//	in local nil not or repeat return then true until while
+var reservedWords = map[string]bool{
+	"and": true, "break": true, "do": true, "else": true, "elseif": true,
+	"end": true, "false": true, "for": true, "function": true, "global": true,
+	"goto": true, "if": true, "in": true, "local": true, "nil": true,
+	"not": true, "or": true, "repeat": true, "return": true, "then": true,
+	"true": true, "until": true, "while": true,
+}
+
+// isIdentifier reports whether s is a Lua Name: a well-formed identifier that
+// is not a reserved word, and therefore may be written without brackets as a
+// table key.
 func isIdentifier(s string) bool {
 	if s == "" || !isNameStart(s[0]) {
 		return false
@@ -392,5 +416,5 @@ func isIdentifier(s string) bool {
 			return false
 		}
 	}
-	return !isKeyword(s)
+	return !reservedWords[s]
 }

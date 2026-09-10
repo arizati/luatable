@@ -19,12 +19,12 @@ func readTestdata(t *testing.T, name string) string {
 }
 
 // lookup walks a path of generic map keys and returns the value found there.
-func lookup(t *testing.T, value interface{}, path ...string) interface{} {
+func lookup(t *testing.T, value any, path ...string) any {
 	t.Helper()
 
 	current := value
 	for _, key := range path {
-		m, ok := current.(map[string]interface{})
+		m, ok := current.(map[string]any)
 		if !ok {
 			t.Fatalf("cannot descend into %T using key %q", current, key)
 		}
@@ -43,7 +43,7 @@ func TestParseTestdataConfig(t *testing.T) {
 		t.Fatalf("unexpected error: %s", err)
 	}
 
-	root, ok := value.(map[string]interface{})
+	root, ok := value.(map[string]any)
 	if !ok {
 		t.Fatalf("the configuration table should decode to a map; got %T", value)
 	}
@@ -53,9 +53,9 @@ func TestParseTestdataConfig(t *testing.T) {
 
 	cases := []struct {
 		key  string
-		want interface{}
+		want any
 	}{
-		{"name", "go-luatable"},
+		{"name", "luatable"},
 		{"version", "1.0.0"},
 		{"debug", false},
 		{"timeout", int64(30)},
@@ -63,7 +63,7 @@ func TestParseTestdataConfig(t *testing.T) {
 		{"max-connections", int64(128)},
 		{"42", "answer"},
 		{"true", "yes"},
-		{"features", []interface{}{"parse", "nested", "comments"}},
+		{"features", []any{"parse", "nested", "comments"}},
 	}
 	for _, tc := range cases {
 		if got := root[tc.key]; !reflect.DeepEqual(got, tc.want) {
@@ -71,7 +71,7 @@ func TestParseTestdataConfig(t *testing.T) {
 		}
 	}
 
-	servers, ok := root["servers"].([]interface{})
+	servers, ok := root["servers"].([]any)
 	if !ok {
 		t.Fatalf("servers should be an array; got %T", root["servers"])
 	}
@@ -109,13 +109,13 @@ func TestParseTestdataModule(t *testing.T) {
 
 	cases := []struct {
 		key  string
-		want interface{}
+		want any
 	}{
 		{"answer", int64(42)},
 		{"greeting", `hello "world"`},
 		{"hex", int64(255)},
 		{"fraction", 125.0},
-		{"list", []interface{}{int64(1), int64(2), int64(3), nil, int64(5)}},
+		{"list", []any{int64(1), int64(2), int64(3), nil, int64(5)}},
 	}
 	for _, tc := range cases {
 		got, ok := table.Get(tc.key)
@@ -134,10 +134,10 @@ func TestParseTestdataComments(t *testing.T) {
 		t.Fatalf("unexpected error: %s", err)
 	}
 
-	want := map[string]interface{}{
+	want := map[string]any{
 		"a": int64(1),
 		"b": int64(2),
-		"c": []interface{}{int64(1), int64(2)},
+		"c": []any{int64(1), int64(2)},
 	}
 	if !reflect.DeepEqual(value, want) {
 		t.Fatalf("unexpected value; got %#v; want %#v", value, want)

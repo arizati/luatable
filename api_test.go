@@ -40,11 +40,11 @@ func TestParserPoolConcurrentUse(t *testing.T) {
 	const iterations = 200
 
 	var wg sync.WaitGroup
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < iterations; j++ {
+			for range iterations {
 				p := pp.Get()
 				got, err := p.Parse(`{1, 2, name = "demo"}`)
 				if err != nil {
@@ -52,7 +52,7 @@ func TestParserPoolConcurrentUse(t *testing.T) {
 					pp.Put(p)
 					return
 				}
-				want := map[string]interface{}{
+				want := map[string]any{
 					"1":    int64(1),
 					"2":    int64(2),
 					"name": "demo",
@@ -73,7 +73,7 @@ func TestHandyParseFunctions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %s", err)
 		}
-		if !reflect.DeepEqual(got, []interface{}{int64(1), int64(2)}) {
+		if !reflect.DeepEqual(got, []any{int64(1), int64(2)}) {
 			t.Fatalf("unexpected value: %#v", got)
 		}
 	})
@@ -83,19 +83,19 @@ func TestHandyParseFunctions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %s", err)
 		}
-		if !reflect.DeepEqual(got, map[string]interface{}{"a": int64(1)}) {
+		if !reflect.DeepEqual(got, map[string]any{"a": int64(1)}) {
 			t.Fatalf("unexpected value: %#v", got)
 		}
 	})
 
 	t.Run("MustParse", func(t *testing.T) {
-		if got := MustParse(`{1}`); !reflect.DeepEqual(got, []interface{}{int64(1)}) {
+		if got := MustParse(`{1}`); !reflect.DeepEqual(got, []any{int64(1)}) {
 			t.Fatalf("unexpected value: %#v", got)
 		}
 	})
 
 	t.Run("MustParseBytes", func(t *testing.T) {
-		if got := MustParseBytes([]byte(`{1}`)); !reflect.DeepEqual(got, []interface{}{int64(1)}) {
+		if got := MustParseBytes([]byte(`{1}`)); !reflect.DeepEqual(got, []any{int64(1)}) {
 			t.Fatalf("unexpected value: %#v", got)
 		}
 	})

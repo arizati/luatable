@@ -10,10 +10,10 @@ import (
 // Entry is a single key/value pair of a Table.
 //
 // Key is one of string, int64, float64 or bool. Value is one of nil, bool,
-// int64, float64, string, []interface{}, map[string]interface{} or *Table.
+// int64, float64, string, []any, map[string]any or *Table.
 type Entry struct {
-	Key   interface{}
-	Value interface{}
+	Key   any
+	Value any
 }
 
 // Table is the rich representation of a parsed Lua table. Unlike the generic
@@ -25,7 +25,7 @@ type Entry struct {
 // structure is required.
 type Table struct {
 	entries []Entry
-	index   map[interface{}]int
+	index   map[any]int
 }
 
 // tableBuilder accumulates fields while a table constructor is parsed.
@@ -37,18 +37,18 @@ type tableBuilder struct {
 }
 
 func newTableBuilder() *tableBuilder {
-	return &tableBuilder{t: &Table{index: make(map[interface{}]int)}}
+	return &tableBuilder{t: &Table{index: make(map[any]int)}}
 }
 
 // append adds a positional field, which receives the next array index.
-func (tb *tableBuilder) append(value interface{}) {
+func (tb *tableBuilder) append(value any) {
 	tb.next++
 	tb.t.set(int64(tb.next), value)
 }
 
 // set stores value under key, replacing any previous value for the same key
 // while keeping the original insertion position.
-func (tb *tableBuilder) set(key, value interface{}) {
+func (tb *tableBuilder) set(key, value any) {
 	tb.t.set(key, value)
 }
 
@@ -56,7 +56,7 @@ func (tb *tableBuilder) build() *Table {
 	return tb.t
 }
 
-func (t *Table) set(key, value interface{}) {
+func (t *Table) set(key, value any) {
 	if i, ok := t.index[key]; ok {
 		t.entries[i].Value = value
 		return
@@ -88,7 +88,7 @@ func (t *Table) Entries() []Entry {
 //
 // Integer-valued float keys are normalized, so Get(1) and Get(1.0) refer to the
 // same entry. The second result reports whether the key is present.
-func (t *Table) Get(key interface{}) (interface{}, bool) {
+func (t *Table) Get(key any) (any, bool) {
 	if t == nil || t.index == nil {
 		return nil, false
 	}
@@ -125,11 +125,11 @@ func (t *Table) IsArray() bool {
 // It returns nil when t is not an array.
 //
 // Nested tables are converted to their generic representation.
-func (t *Table) Array() []interface{} {
+func (t *Table) Array() []any {
 	if !t.IsArray() {
 		return nil
 	}
-	out := make([]interface{}, len(t.entries))
+	out := make([]any, len(t.entries))
 	for _, e := range t.entries {
 		out[e.Key.(int64)-1] = ToInterface(e.Value)
 	}
@@ -144,8 +144,8 @@ func (t *Table) Array() []interface{} {
 // Note that a numeric key and a text key with the same spelling collide, for
 // example [1] and ["1"] both map to the key "1". Use ParseTable when that
 // distinction matters.
-func (t *Table) Map() map[string]interface{} {
-	m := make(map[string]interface{}, t.Len())
+func (t *Table) Map() map[string]any {
+	m := make(map[string]any, t.Len())
 	if t == nil {
 		return m
 	}
@@ -155,10 +155,10 @@ func (t *Table) Map() map[string]interface{} {
 	return m
 }
 
-// Interface returns the generic representation of t: a []interface{} when t is
-// a pure array table, and a map[string]interface{} otherwise. An empty table
+// Interface returns the generic representation of t: a []any when t is
+// a pure array table, and a map[string]any otherwise. An empty table
 // yields an empty map.
-func (t *Table) Interface() interface{} {
+func (t *Table) Interface() any {
 	if t.IsArray() {
 		return t.Array()
 	}
@@ -209,7 +209,7 @@ func (t *Table) writeTo(b *strings.Builder) {
 	b.WriteByte('}')
 }
 
-func writeValue(b *strings.Builder, v interface{}) {
+func writeValue(b *strings.Builder, v any) {
 	switch x := v.(type) {
 	case nil:
 		b.WriteString("nil")
@@ -230,7 +230,7 @@ func writeValue(b *strings.Builder, v interface{}) {
 
 // ToInterface recursively converts a parsed value into its generic
 // representation. Values that are not *Table are returned unchanged.
-func ToInterface(v interface{}) interface{} {
+func ToInterface(v any) any {
 	if t, ok := v.(*Table); ok {
 		return t.Interface()
 	}
@@ -246,7 +246,7 @@ const (
 
 // normalizeKey converts a key into its canonical, comparable form. The second
 // result reports whether key is a valid table key.
-func normalizeKey(key interface{}) (interface{}, bool) {
+func normalizeKey(key any) (any, bool) {
 	switch k := key.(type) {
 	case string:
 		return k, true
@@ -271,7 +271,7 @@ func normalizeKey(key interface{}) (interface{}, bool) {
 
 // keyToString renders a table key the way it appears in the generic map
 // representation.
-func keyToString(key interface{}) string {
+func keyToString(key any) string {
 	switch k := key.(type) {
 	case string:
 		return k

@@ -32,7 +32,7 @@ func (e *SyntaxError) Error() string {
 
 // newSyntaxError builds a *SyntaxError for the given input and byte offset,
 // deriving the line and column from src.
-func newSyntaxError(src string, offset int, format string, args ...interface{}) *SyntaxError {
+func newSyntaxError(src string, offset int, format string, args ...any) *SyntaxError {
 	line, column := positionAt(src, offset)
 	return &SyntaxError{
 		Msg:    fmt.Sprintf(format, args...),

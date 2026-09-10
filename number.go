@@ -18,7 +18,7 @@ import (
 //   - hexadecimal integers become int64, wrapping around modulo 2^64 like Lua;
 //   - hexadecimal literals with a fractional part or a binary exponent ("p")
 //     become float64.
-func parseLuaNumber(s string) (interface{}, error) {
+func parseLuaNumber(s string) (any, error) {
 	if s == "" {
 		return nil, fmt.Errorf("empty number literal")
 	}
@@ -28,7 +28,7 @@ func parseLuaNumber(s string) (interface{}, error) {
 	return parseDecNumber(s)
 }
 
-func parseDecNumber(s string) (interface{}, error) {
+func parseDecNumber(s string) (any, error) {
 	if strings.ContainsAny(s, ".eE") {
 		f, err := strconv.ParseFloat(s, 64)
 		if err != nil {
@@ -51,7 +51,7 @@ func parseDecNumber(s string) (interface{}, error) {
 	return f, nil
 }
 
-func parseHexNumber(s string) (interface{}, error) {
+func parseHexNumber(s string) (any, error) {
 	body := s[2:]
 	if body == "" {
 		return nil, fmt.Errorf("invalid number literal %q", s)
@@ -73,7 +73,7 @@ func parseHexNumber(s string) (interface{}, error) {
 // parseHexFloat parses the "0x" prefix stripped body of a hexadecimal float.
 // The binary exponent introduced by 'p' is optional, so both "0x1.8" and
 // "0x1.8p1" are accepted.
-func parseHexFloat(orig, body string) (interface{}, error) {
+func parseHexFloat(orig, body string) (any, error) {
 	mantissa := body
 	exp := 0
 
@@ -100,7 +100,7 @@ func parseHexFloat(orig, body string) (interface{}, error) {
 	}
 
 	value := 0.0
-	for i := 0; i < len(intPart); i++ {
+	for i := range len(intPart) {
 		v, ok := hexVal(intPart[i])
 		if !ok {
 			return nil, fmt.Errorf("invalid number literal %q", orig)
@@ -109,7 +109,7 @@ func parseHexFloat(orig, body string) (interface{}, error) {
 	}
 
 	scale := 1.0 / 16.0
-	for i := 0; i < len(fracPart); i++ {
+	for i := range len(fracPart) {
 		v, ok := hexVal(fracPart[i])
 		if !ok {
 			return nil, fmt.Errorf("invalid number literal %q", orig)
@@ -129,7 +129,7 @@ func parseHexUint64(s string) (uint64, error) {
 		return 0, fmt.Errorf("empty hexadecimal literal")
 	}
 	var u uint64
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		v, ok := hexVal(s[i])
 		if !ok {
 			return 0, fmt.Errorf("invalid hexadecimal digit %q", string(s[i]))

@@ -1,6 +1,6 @@
 /*
-Package luatable implements a dependency-free parser for Lua table
-constructors, covering the syntax accepted by Lua 5.1 through Lua 5.4.
+Package luatable reads and writes Lua table constructors, covering the syntax
+accepted by Lua 5.1 through Lua 5.5.
 
 # Overview
 
@@ -14,22 +14,23 @@ luatable turns a Lua table constructor such as
 	    { 1, 2, 3 },          -- positional (array) field
 	}
 
-into a generic Go value. The leading "local config =" part is ordinary Lua
-code and is not part of a table constructor; luatable parses the "{" ... "}"
-expression. Use Parser.AllowReturnPrefix (or the ParseModule helpers) when the
-input is a Lua module file of the form "return { ... }".
+into a generic Go value, and turns such values back into table literals. The
+leading "local config =" part is ordinary Lua code and is not part of a table
+constructor; luatable parses the "{" ... "}" expression. Use
+Parser.AllowReturnPrefix (or the ParseModule helpers) when the input is a Lua
+module file of the form "return { ... }".
 
 # Returned values
 
-A parsed table is represented as an interface{} holding one of:
+A parsed table is represented as an any holding one of:
 
-	nil                  for Lua nil
-	bool                 for Lua true / false
-	int64                for Lua integer literals
-	float64              for Lua float literals
-	string               for Lua string literals
-	[]interface{}        for a pure array table (keys are exactly 1..n)
-	map[string]interface{} for any other table
+	nil             for Lua nil
+	bool            for Lua true / false
+	int64           for Lua integer literals
+	float64         for Lua float literals
+	string          for Lua string literals
+	[]any           for a pure array table (keys are exactly 1..n)
+	map[string]any  for any other table
 
 When a table is not a pure array, its array part is exposed in the map using
 decimal string keys ("1", "2", ...), mirroring how JSON-like formats represent
@@ -59,14 +60,48 @@ Variable references, function calls, arithmetic and concatenation expressions
 (for example "math.huge" or "1 + 2") are rejected with a *SyntaxError that
 carries the byte offset, line and column of the offending construct.
 
+# Reserved words
+
+A table key that collides with a Lua reserved word has to be quoted: "{end = 1}"
+is rejected by every Lua implementation, so the encoder writes {["end"] = 1}
+instead. The set covers Lua 5.1 through Lua 5.5, which also means that "global"
+(reserved since Lua 5.5) is quoted.
+
+The parser is lenient by default and accepts the unquoted form, so that slightly
+off-spec data files still load. Set Parser.StrictKeywords to reject reserved
+words used as bare table keys, matching the reference implementation.
+
+# Encoding
+
+Marshal and its variants perform the reverse operation:
+
+	out, err := luatable.Marshal(map[string]any{"name": "demo"})       // {name = "demo"}
+	text, err := luatable.MarshalModule(map[string]any{"debug": true}) // return {debug = true}
+
+The encoder only emits literals and nested tables, so its output is always
+readable by Parse. Values outside its domain (a struct, a func, a NaN, a uint64
+that does not fit into int64, ...) are rejected with an *EncodeError carrying
+the path of the offending value, instead of producing invalid Lua.
+
+Pass a *Table to Marshal when exact key types and insertion order matter. A
+map[string]any can only express string keys, so [1] and ["1"] become
+indistinguishable, and its keys are emitted in sorted order so that the output
+stays reproducible.
+
 # Example
 
 	value, err := luatable.Parse(`{ name = "demo", items = { 1, 2, 3 } }`)
 	if err != nil {
 	    log.Fatal(err)
 	}
-	table := value.(map[string]interface{})
-	fmt.Println(table["name"])        // demo
-	fmt.Println(table["items"].([]interface{})) // [1 2 3]
+	table := value.(map[string]any)
+	fmt.Println(table["name"])          // demo
+	fmt.Println(table["items"].([]any)) // [1 2 3]
+
+	out, err := luatable.Marshal(table)
+	if err != nil {
+	    log.Fatal(err)
+	}
+	fmt.Println(string(out))            // {items = {1,2,3},name = "demo"}
 */
 package luatable

@@ -1,6 +1,6 @@
 -- Example configuration table exercising most supported syntax.
 {
-    name = "go-luatable",
+    name = "luatable",
     version = "1.0.0",
     debug = false,
     timeout = 30,
