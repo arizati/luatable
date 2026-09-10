@@ -1,0 +1,33 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The oracle tests compare the parser against real interpreters and
+      # skip any that are absent, so installing them widens coverage.
+      # Lua 5.5 is not packaged for Ubuntu yet and is skipped.
+      - name: Install Lua interpreters
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1 lua5.2 lua5.3 lua5.4 luajit
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -count=1 ./...
