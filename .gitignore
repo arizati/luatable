@@ -1,0 +1,49 @@
+# =============================================================================
+# go-luatable
+# =============================================================================
+
+# --- Go build output ---------------------------------------------------------
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.dylib
+*.test
+*.out
+
+# --- Test, coverage and profiling reports -----------------------------------
+coverage.txt
+coverage.out
+coverage.html
+*.cover
+*.prof
+*.pprof
+
+# NOTE: failing-input corpora recorded by "go test -fuzz" are written to
+# testdata/fuzz/<FuzzTarget>/ and are meant to be committed as regression
+# tests, so that directory is intentionally NOT ignored here.
+
+# --- Go workspace files ------------------------------------------------------
+go.work
+go.work.sum
+
+# --- Editors and IDEs --------------------------------------------------------
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# KDE/Dolphin folder metadata (e.g. the folder icon stored per directory)
+.directory
+.filenames
+
+# --- Operating system files --------------------------------------------------
+.DS_Store
+._*
+Thumbs.db
+desktop.ini
+
+.draft/
