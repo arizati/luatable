@@ -1,6 +1,7 @@
 package luatable
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,45 @@ var fuzzSeeds = []string{
 	// by the encoder.
 	"{end = 1, function = 2, global = 3, goto = 4}",
 	"{nil = 1}",
+
+	// Literals outside the float64 range evaluate to ±Inf or to zero, as every
+	// reference implementation does; the encoder rejects the resulting
+	// infinities.
+	"{1e400}",
+	"{-1e400}",
+	"{0x1p1024}",
+	"{0x1p-1100}",
+	"{[0x1p1024] = 1}",
+}
+
+// containsInf reports whether v holds a float64 infinity anywhere inside it,
+// in either the generic or the rich table representation. Parse produces such
+// values from literals outside the float64 range (1e400, 0x1p1024); Marshal
+// rejects them because no Lua literal denotes an infinity.
+func containsInf(v any) bool {
+	switch x := v.(type) {
+	case float64:
+		return math.IsInf(x, 0)
+	case []any:
+		for _, e := range x {
+			if containsInf(e) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, e := range x {
+			if containsInf(e) {
+				return true
+			}
+		}
+	case *Table:
+		for _, e := range x.entries {
+			if containsInf(e.Value) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func FuzzParse(f *testing.F) {
@@ -133,6 +173,11 @@ func FuzzMarshalParseTable(f *testing.F) {
 		if err != nil {
 			return
 		}
+		// Infinities have no Lua literal, so Marshal rejects them; they are
+		// the one documented exception to the round trip invariant.
+		if containsInf(original) {
+			return
+		}
 
 		out, err := Marshal(original)
 		if err != nil {
@@ -161,6 +206,11 @@ func FuzzMarshalGeneric(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		v, err := Parse(s)
 		if err != nil {
+			return
+		}
+		// Infinities have no Lua literal, so Marshal rejects them; they are
+		// the one documented exception to the round trip invariant.
+		if containsInf(v) {
 			return
 		}
 

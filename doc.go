@@ -1,6 +1,7 @@
 /*
-Package luatable reads and writes Lua table constructors, covering the syntax
-accepted by Lua 5.1 through Lua 5.5.
+Package luatable reads and writes Lua table constructors. On input it accepts
+the union of the syntax of Lua 5.1 through Lua 5.5; on output it emits a subset
+that every one of those versions accepts.
 
 # Overview
 
@@ -45,10 +46,19 @@ generic representation described above.
   - array part, hash part, and mixed tables
   - nested table constructors
   - identifier keys ("name = value")
-  - bracket keys ("[expr] = value") with string, integer, float and boolean keys
-  - short strings with single or double quotes and all Lua escape sequences
+  - bracket keys ("[expr] = value") with string, integer, float and boolean
+    keys; NaN keys are rejected as they are in Lua, and infinite keys are
+    rejected even though Lua accepts them, because the encoder could not write
+    them back
+  - short strings with single or double quotes and all Lua escape sequences,
+    except that \u{XXX} is limited to the Unicode scalar range: Lua 5.4 itself
+    accepts code points up to 0x7FFFFFFF, which have no single-rune Go
+    representation
   - long strings ("[[...]]", "[=[...]=]") with arbitrary levels
-  - decimal, hexadecimal and hexadecimal-float numbers, including exponents
+  - decimal, hexadecimal and hexadecimal-float numbers (the latter since Lua
+    5.2), including exponents; literals outside the float64 range (1e400,
+    0x1p-1100) evaluate to ±Inf or to zero, as every reference implementation
+    does, although the manual leaves float overflow unspecified
   - unary minus and parenthesized literal expressions
   - line comments, block comments and long-bracket comments
   - "," and ";" field separators, including trailing separators
@@ -59,6 +69,11 @@ Values must be literals, nested tables, unary minus or parenthesized literals.
 Variable references, function calls, arithmetic and concatenation expressions
 (for example "math.huge" or "1 + 2") are rejected with a *SyntaxError that
 carries the byte offset, line and column of the offending construct.
+
+A leading UTF-8 byte order mark is likewise rejected as an unexpected
+character: it is not part of Lua's lexical grammar (Lua 5.2 and later strip
+one in loadfile, LuaJIT strips it everywhere, Lua 5.1 strips it nowhere), so
+strip it before parsing files written by editors that add one.
 
 # Reserved words
 
@@ -79,9 +94,17 @@ Marshal and its variants perform the reverse operation:
 	text, err := luatable.MarshalModule(map[string]any{"debug": true}) // return {debug = true}
 
 The encoder only emits literals and nested tables, so its output is always
-readable by Parse. Values outside its domain (a struct, a func, a NaN, a uint64
-that does not fit into int64, ...) are rejected with an *EncodeError carrying
-the path of the offending value, instead of producing invalid Lua.
+readable by Parse, and it sticks to forms that Lua 5.1 already understands.
+Values outside its domain (a struct, a func, a NaN, an infinity, a uint64 that
+does not fit into int64, ...) are rejected with an *EncodeError carrying the
+path of the offending value, instead of producing invalid Lua. Note the
+asymmetry around infinity: Parse produces ±Inf from literals outside the float64
+range (1e400, 0x1p1024), while Marshal refuses to write one, because no literal
+is specified to denote an infinity -- the manual leaves float overflow to the
+implementation. math.MinInt64 is the second value whose round trip is not exact:
+it is written in decimal, which Parse reads back as the float64 of the same
+value, because no literal that every Lua version reads the same way denotes it
+(0x8000000000000000 does on 5.3 and later, but not on 5.1, 5.2 or LuaJIT).
 
 Pass a *Table to Marshal when exact key types and insertion order matter. A
 map[string]any can only express string keys, so [1] and ["1"] become

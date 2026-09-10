@@ -182,6 +182,8 @@ func TestLexerErrors(t *testing.T) {
 		{"unterminated double quote", `"abc`, "unfinished string literal", 0},
 		{"unterminated single quote", `'abc`, "unfinished string literal", 0},
 		{"newline in short string", "\"a\nb\"", "unfinished string literal", 0},
+		{"short string ending in backslash", `"abc\`, "unfinished string literal", 0},
+		{"line continuation at end of input", "\"abc\\\n", "unfinished string literal", 0},
 		{"unterminated long string", "[[abc", "unfinished long bracket", 0},
 		{"unterminated leveled long string", "[==[abc", "unfinished long bracket", 0},
 		{"unterminated long comment", "--[[abc", "unfinished long bracket", 2},

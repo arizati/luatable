@@ -34,8 +34,9 @@ func TestMarshalScalars(t *testing.T) {
 		{"int64 zero", int64(0), `0`},
 		{"int64 negative", int64(-7), `-7`},
 		{"int64 max", int64(math.MaxInt64), `9223372036854775807`},
-		// math.MinInt64 is written in hexadecimal form, see writeInt.
-		{"int64 min", int64(math.MinInt64), `0x8000000000000000`},
+		// math.MinInt64 is written in decimal, see writeInt: the hexadecimal
+		// form that would preserve the type is wrong on Lua 5.1/5.2/LuaJIT.
+		{"int64 min", int64(math.MinInt64), `-9223372036854775808`},
 
 		// Convenience integer types.
 		{"int", int(5), `5`},
@@ -440,11 +441,15 @@ func assertGenericRoundTrip(t *testing.T, v any) {
 		t.Fatalf("unexpected parse result for %s: %#v", out, got)
 	}
 
-	// Documented exception: an empty slice and an empty map both encode to
-	// "{}", which parses back as an empty map.
+	// Documented exceptions. An empty slice and an empty map both encode to
+	// "{}", which parses back as an empty map; and math.MinInt64 has no integer
+	// literal form in Lua, so it comes back as the float64 of the same value.
 	want := v
 	if s, ok := v.([]any); ok && len(s) == 0 {
 		want = map[string]any{}
+	}
+	if n, ok := v.(int64); ok && n == math.MinInt64 {
+		want = float64(math.MinInt64)
 	}
 
 	if !reflect.DeepEqual(arr[0], want) {

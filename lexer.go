@@ -77,8 +77,14 @@ type token struct {
 // lexer performs on-demand tokenization of a Lua table constructor.
 //
 // The lexer is intentionally small: it only knows the lexical grammar shared
-// by Lua 5.1 - 5.4 (whitespace, comments, long brackets, strings and numbers)
+// by Lua 5.1 - 5.5 (whitespace, comments, long brackets, strings and numbers)
 // and leaves all grammar decisions to the parser.
+//
+// A leading UTF-8 byte order mark is deliberately not skipped: it is not part
+// of Lua's lexical grammar (Lua 5.2 and later strip one in loadfile, LuaJIT
+// strips it everywhere, Lua 5.1 strips it nowhere), so it surfaces here as an
+// unexpected character. Strip it before parsing files written by editors that
+// add one.
 type lexer struct {
 	src string
 	pos int
@@ -262,7 +268,10 @@ func (l *lexer) scanShortString() {
 		case c == '\\':
 			l.pos++
 			if l.pos >= len(l.src) {
-				break
+				// The backslash is the final byte of the input, so the
+				// string is unfinished.
+				l.err = newSyntaxError(l.src, start, "unfinished string literal")
+				return
 			}
 			// "\<newline>" is a valid line continuation.
 			if l.src[l.pos] == '\r' && l.peek(1) == '\n' {

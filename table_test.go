@@ -1,6 +1,7 @@
 package luatable
 
 import (
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -91,6 +92,10 @@ func TestTableGet(t *testing.T) {
 	}{
 		{"array index", 1, int64(10), true},
 		{"array index typed int64", int64(2), int64(20), true},
+		{"array index typed int32", int32(1), int64(10), true},
+		{"array index typed uint", uint(1), int64(10), true},
+		{"array index typed uint64", uint64(2), int64(20), true},
+		{"uint64 beyond int64", uint64(math.MaxUint64), nil, false},
 		{"string key", "name", "demo", true},
 		{"boolean key", true, false, true},
 		{"float key", 1.5, "half", true},
@@ -284,9 +289,20 @@ func TestNormalizeKey(t *testing.T) {
 		{"s", "s", true},
 		{true, true, true},
 		{int(3), int64(3), true},
+		{int8(3), int64(3), true},
+		{int16(3), int64(3), true},
+		{int32(3), int64(3), true},
 		{int64(3), int64(3), true},
+		{uint(3), int64(3), true},
+		{uint8(3), int64(3), true},
+		{uint16(3), int64(3), true},
+		{uint32(3), int64(3), true},
+		{uint64(3), int64(3), true},
+		{uint64(math.MaxUint64), nil, false},
 		{3.0, int64(3), true},
 		{3.5, 3.5, true},
+		{math.Inf(1), nil, false},
+		{math.NaN(), nil, false},
 		{nil, nil, false},
 		{[]int{1}, nil, false},
 	}

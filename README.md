@@ -143,13 +143,17 @@ is useful:
 
 Values that cannot be represented — `struct`, `func`, `chan`, `NaN`, `±Inf`, or
 a `uint64` that does not fit into `int64` — are rejected with an `*EncodeError`
-carrying the path of the offending value, for example `.servers[0].port`.
+carrying the path of the offending value, for example `.servers[0].port`. An
+infinity is rejected even though a literal such as `1e400` happens to evaluate
+to one on every implementation tested: the manual leaves float overflow to the
+implementation, so the encoder will not build a value out of it.
 
 Round-trip guarantees:
 
 * `Parse(Marshal(v))` reproduces `v` for every value in the generic domain, with
-  one documented exception: an empty slice encodes to `{}` and parses back as an
-  empty `map[string]any`.
+  two documented exceptions: an empty slice encodes to `{}` and parses back as an
+  empty `map[string]any`, and `math.MinInt64` (see below) comes back as the
+  `float64` of the same value.
 * Passing a `*Table` to `Marshal` preserves exact key types and, for non-array
   tables, insertion order. A pure array is written positionally, so its elements
   follow index order `1..n`.
@@ -158,8 +162,12 @@ Round-trip guarantees:
 * Keys that collide with a Lua reserved word are always quoted. The set is the
   union over Lua 5.1 – 5.5, so both `goto` (reserved since 5.2) and `global`
   (reserved since 5.5) are quoted, and the output compiles on every version.
-* `math.MinInt64` is written as `0x8000000000000000`, because its decimal form
-  would be parsed back as a `float64`.
+* `math.MinInt64` is written in decimal, `-9223372036854775808`. Neither Lua nor
+  this package has an integer literal for it, so the value comes back as a
+  `float64` — exactly equal, but a different type. The hexadecimal form
+  `0x8000000000000000` would preserve the type on Lua 5.3 and later, but it
+  yields `+9223372036854775808` on Lua 5.1, Lua 5.2 and LuaJIT, which have no
+  integer subtype at all.
 
 ## Module files
 

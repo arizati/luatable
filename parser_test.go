@@ -1,6 +1,7 @@
 package luatable
 
 import (
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -243,6 +244,34 @@ func TestParseNumericKeyTypes(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("Get(%#v) = %#v; want %#v", tc.key, got, tc.want)
 		}
+	}
+}
+
+// TestParseOverflowLiterals checks that literals outside the float64 range
+// evaluate to ±Inf or to zero, which is what Lua 5.1 through 5.5 and LuaJIT do
+// as well, even though the manual leaves float overflow unspecified. The
+// resulting infinities are one of the values Marshal rejects; see the package
+// documentation.
+func TestParseOverflowLiterals(t *testing.T) {
+	got := parseGeneric(t, `{1e400, -1e400, 0x1p1024, 1e-400}`)
+	want := []any{math.Inf(1), math.Inf(-1), math.Inf(1), 0.0}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected value; got %#v; want %#v", got, want)
+	}
+}
+
+// TestParseInfiniteTableKeyIsRejected documents that an infinite key is rejected
+// although Lua accepts one -- "{[1e400] = 'x'}" is a valid table there -- because
+// an infinity has no literal the encoder could write back. NaN keys are rejected
+// by Lua too, but the NaN half of the check in parseField is unreachable from a
+// literal, since Lua has no NaN literal.
+func TestParseInfiniteTableKeyIsRejected(t *testing.T) {
+	_, err := Parse(`{[0x1p1024] = "x"}`)
+	if err == nil {
+		t.Fatal("expecting an error for an infinite table key")
+	}
+	if !strings.Contains(err.Error(), "table key is NaN or infinite") {
+		t.Fatalf("unexpected error message: %s", err)
 	}
 }
 

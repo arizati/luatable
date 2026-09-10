@@ -2,9 +2,12 @@ package luatable
 
 import (
 	"math"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -78,7 +81,7 @@ func TestMarshalOutputIsValidLua(t *testing.T) {
 
 		{"non identifier keys", map[string]any{"max-connections": int64(1), "": int64(2), "中文": int64(3), "1": int64(4)}},
 
-		// math.MinInt64 is the one value written in hexadecimal form.
+		// math.MinInt64 is written in decimal, like every other integer.
 		{"numbers", map[string]any{
 			"min": int64(math.MinInt64), "max": int64(math.MaxInt64),
 			"zero": int64(0), "one": 1.0, "negative": -0.25,
@@ -170,6 +173,144 @@ func TestMarshalOutputIsAcceptedByEveryLuaVersion(t *testing.T) {
 			out, err := exec.Command(lua, path).CombinedOutput()
 			if err != nil {
 				t.Fatalf("%s rejected the generated code: %s\n%s\n%s", filepath.Base(lua), err, out, compact)
+			}
+		})
+	}
+}
+
+// luaSupportsHexFloat reports whether the interpreter can read a hexadecimal
+// float literal, which Lua 5.2 added and Lua 5.1 lacks. Probing is used instead
+// of parsing the version string, because LuaJIT reports "Lua 5.1" yet does
+// support the syntax.
+func luaSupportsHexFloat(lua string) bool {
+	out, err := exec.Command(lua, "-e",
+		`local f = (loadstring or load)("return 0x1.8p1") io.write(f and "yes" or "no")`).Output()
+	return err == nil && strings.TrimSpace(string(out)) == "yes"
+}
+
+// luaHexDump evaluates every literal listed in the file named by the first
+// argument and prints "literal<TAB>value" using "%.17g".
+const luaHexDump = `
+local loadstr = loadstring or load
+
+for line in io.lines(arg[1]) do
+  local f = loadstr("return " .. line)
+  if f == nil then
+    print(line .. "\tLOAD-ERROR")
+  else
+    print(string.format("%s\t%.17g", line, f()))
+  end
+end
+`
+
+// hexFloatLiterals returns a deterministic set of hexadecimal float literals
+// whose mantissas are long enough to require rounding, with exponents that
+// overflow and underflow the float64 range as well.
+func hexFloatLiterals(n int) []string {
+	rng := rand.New(rand.NewPCG(0xfeed, 0xbeef))
+
+	lits := make([]string, 0, n)
+	for range n {
+		var b strings.Builder
+		b.WriteString("0x")
+		for range 1 + rng.IntN(14) {
+			b.WriteByte("0123456789abcdef"[rng.IntN(16)])
+		}
+		b.WriteByte('.')
+		for range 1 + rng.IntN(20) {
+			b.WriteByte("0123456789abcdef"[rng.IntN(16)])
+		}
+		b.WriteString("p")
+		b.WriteString(strconv.Itoa(rng.IntN(2200) - 1100))
+		lits = append(lits, b.String())
+	}
+	return lits
+}
+
+// formatLuaNumber renders f the way C's "%.17g" does, so that it can be compared
+// with what an interpreter printed. Both sides round correctly, so equal strings
+// mean equal bits.
+func formatLuaNumber(f float64) string {
+	switch {
+	case math.IsInf(f, 1):
+		return "inf"
+	case math.IsInf(f, -1):
+		return "-inf"
+	default:
+		return strconv.FormatFloat(f, 'g', 17, 64)
+	}
+}
+
+// TestHexFloatMatchesLua compares the hexadecimal float conversion with a real
+// interpreter. TestHexFloatMatchesStrconv only pins which conversion is used;
+// this is the oracle that says the choice is the right one, and it is what the
+// conversion is documented against.
+//
+// An interpreter that cannot read hexadecimal floats at all (Lua 5.1) is
+// skipped, and so is the whole test when no interpreter is installed or in
+// -short mode.
+func TestHexFloatMatchesLua(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping the external interpreter check in short mode")
+	}
+
+	var interpreters []string
+	for _, name := range luaInterpreters {
+		if path, err := exec.LookPath(name); err == nil {
+			interpreters = append(interpreters, path)
+		}
+	}
+	if len(interpreters) == 0 {
+		t.Skipf("no Lua interpreter found (tried %v)", luaInterpreters)
+	}
+
+	lits := hexFloatLiterals(2000)
+	list := strings.Join(lits, "\n") + "\n"
+
+	for _, lua := range interpreters {
+		t.Run(filepath.Base(lua), func(t *testing.T) {
+			if !luaSupportsHexFloat(lua) {
+				t.Skip("the interpreter cannot read hexadecimal float literals")
+			}
+
+			dir := t.TempDir()
+			literals := filepath.Join(dir, "literals.txt")
+			if err := os.WriteFile(literals, []byte(list), 0o600); err != nil {
+				t.Fatalf("cannot write %s: %s", literals, err)
+			}
+			script := filepath.Join(dir, "dump.lua")
+			if err := os.WriteFile(script, []byte(luaHexDump), 0o600); err != nil {
+				t.Fatalf("cannot write %s: %s", script, err)
+			}
+
+			out, err := exec.Command(lua, script, literals).Output()
+			if err != nil {
+				t.Fatalf("%s failed: %s", filepath.Base(lua), err)
+			}
+
+			lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+			if len(lines) != len(lits) {
+				t.Fatalf("got %d lines of output; want %d", len(lines), len(lits))
+			}
+
+			for i, line := range lines {
+				lit, luaValue, ok := strings.Cut(line, "\t")
+				if !ok || lit != lits[i] {
+					t.Fatalf("unexpected output on line %d: %q", i, line)
+				}
+
+				value, err := parseLuaNumber(lit)
+				if err != nil {
+					t.Fatalf("parseLuaNumber(%q) failed: %s", lit, err)
+				}
+				f, ok := value.(float64)
+				if !ok {
+					t.Fatalf("parseLuaNumber(%q) = %T; want float64", lit, value)
+				}
+				if got := formatLuaNumber(f); got != luaValue {
+					t.Fatalf("parseLuaNumber(%q) = %s; %s says %s",
+						lit, got, filepath.Base(lua), luaValue)
+				}
 			}
 		})
 	}

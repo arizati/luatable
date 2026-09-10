@@ -86,8 +86,11 @@ func (t *Table) Entries() []Entry {
 
 // Get returns the value stored under key.
 //
-// Integer-valued float keys are normalized, so Get(1) and Get(1.0) refer to the
-// same entry. The second result reports whether the key is present.
+// The key may be a string, a bool, a float64 or any Go integer type: integer
+// keys of every width are normalized to int64, and integer-valued float keys
+// likewise, so Get(1), Get(int32(1)) and Get(1.0) all refer to the same entry.
+// NaN and infinite keys always report absence. The second result reports
+// whether the key is present.
 func (t *Table) Get(key any) (any, bool) {
 	if t == nil || t.index == nil {
 		return nil, false
@@ -145,10 +148,10 @@ func (t *Table) Array() []any {
 // example [1] and ["1"] both map to the key "1". Use ParseTable when that
 // distinction matters.
 func (t *Table) Map() map[string]any {
-	m := make(map[string]any, t.Len())
 	if t == nil {
-		return m
+		return map[string]any{}
 	}
+	m := make(map[string]any, len(t.entries))
 	for _, e := range t.entries {
 		m[keyToString(e.Key)] = ToInterface(e.Value)
 	}
@@ -244,8 +247,10 @@ const (
 	maxInt64Float = 9223372036854775808.0
 )
 
-// normalizeKey converts a key into its canonical, comparable form. The second
-// result reports whether key is a valid table key.
+// normalizeKey converts a key into its canonical, comparable form: keys of
+// every Go integer type are narrowed to int64, and integer-valued float64
+// keys are canonicalized to int64 as well. The second result reports whether
+// key is a valid table key.
 func normalizeKey(key any) (any, bool) {
 	switch k := key.(type) {
 	case string:
@@ -254,8 +259,30 @@ func normalizeKey(key any) (any, bool) {
 		return k, true
 	case int:
 		return int64(k), true
+	case int8:
+		return int64(k), true
+	case int16:
+		return int64(k), true
+	case int32:
+		return int64(k), true
 	case int64:
 		return k, true
+	case uint:
+		if uint64(k) > math.MaxInt64 {
+			return nil, false
+		}
+		return int64(k), true
+	case uint8:
+		return int64(k), true
+	case uint16:
+		return int64(k), true
+	case uint32:
+		return int64(k), true
+	case uint64:
+		if k > math.MaxInt64 {
+			return nil, false
+		}
+		return int64(k), true
 	case float64:
 		if math.IsNaN(k) || math.IsInf(k, 0) {
 			return nil, false

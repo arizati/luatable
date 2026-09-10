@@ -45,9 +45,15 @@ func newEncodeError(path, format string, args ...any) *EncodeError {
 // The encoder accepts the same value domain that Parse produces (nil, bool,
 // int64, float64, string, []any, map[string]any and *Table), plus a few
 // convenience types such as int, uint, float32, []string and
-// map[string]string. Values outside that domain are rejected with an
-// *EncodeError; the encoder never emits a literal that its own parser would
-// reject.
+// map[string]string. Any other value is rejected with an *EncodeError; the
+// encoder never emits a literal that its own parser would reject.
+//
+// Two values of that domain do not survive an exact round trip. NaN and the
+// infinities are rejected outright: no literal is specified to denote an
+// infinity, because the manual leaves float overflow to the implementation, and
+// the encoder refuses to invent one out of an overflowing literal.
+// math.MinInt64 is written in decimal, which Parse reads back as the float64 of
+// the same value; see writeInt for why the hexadecimal form is not used.
 type Encoder struct {
 	// Indent is the indentation unit used for multi-line output. The zero
 	// value (an empty string) produces compact single-line output.
@@ -211,17 +217,22 @@ func (e *Encoder) writeUnsigned(buf *bytes.Buffer, u uint64, path string) error 
 	return nil
 }
 
-// writeInt writes an integer literal.
+// writeInt writes an integer literal in decimal, which every Lua version reads
+// as the same number.
 //
-// Every value round trips through Parse except math.MinInt64, whose decimal
-// form "-9223372036854775808" would be parsed as a unary minus applied to
-// 9223372036854775808; that literal overflows int64 and is therefore promoted
-// to a float64. Its hexadecimal form is read back as exactly this int64.
+// math.MinInt64 is a documented exception to the exact round trip. Its decimal
+// form "-9223372036854775808" is read as a unary minus applied to
+// 9223372036854775808, a literal that overflows int64 and is therefore promoted
+// to a float64, so Parse returns float64(-9223372036854775808) instead of the
+// int64. Lua itself has the same quirk: no integer literal denotes
+// math.mininteger there either, and math.type(-9223372036854775808) is "float".
+//
+// The hexadecimal form 0x8000000000000000 does read back as this int64, but it
+// relies on the wraparound of hexadecimal integer literals introduced in Lua
+// 5.3, and it yields +9223372036854775808 on Lua 5.1, Lua 5.2 and LuaJIT, which
+// have no integer subtype at all. Getting the value right everywhere is worth
+// more than preserving the type, so the decimal form is used.
 func writeInt(buf *bytes.Buffer, n int64) {
-	if n == math.MinInt64 {
-		buf.WriteString("0x8000000000000000")
-		return
-	}
 	buf.WriteString(strconv.FormatInt(n, 10))
 }
 

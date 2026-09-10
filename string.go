@@ -26,7 +26,7 @@ func decodeStringLiteral(raw string) (value string, errOffset int, err error) {
 }
 
 // decodeShortString decodes a quoted short string, interpreting every escape
-// sequence supported by Lua 5.1 - 5.4.
+// sequence supported by Lua 5.1 - 5.5.
 func decodeShortString(raw string) (string, int, error) {
 	body := raw[1 : len(raw)-1]
 
@@ -139,6 +139,10 @@ func decodeShortString(raw string) (string, int, error) {
 // decodeUnicodeEscape decodes the "\u{XXXX}" escape starting at the index of
 // the 'u' character. It returns the code point and the index just past the
 // closing brace.
+//
+// Code points are limited to the Unicode scalar range: Lua 5.4 itself accepts
+// values up to 0x7FFFFFFF, but those beyond U+10FFFF (and surrogate halves)
+// have no representation as a single Go rune.
 func decodeUnicodeEscape(body string, i int) (uint64, int, error) {
 	if i+1 >= len(body) || body[i+1] != '{' {
 		return 0, 0, fmt.Errorf("missing '{' in '\\u{...}' escape")

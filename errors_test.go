@@ -106,8 +106,22 @@ func TestParseErrors(t *testing.T) {
 			wantCol:  2,
 		},
 		{
+			name:     "infinite table key",
+			src:      "{[0x1p1024] = 1}",
+			wantMsg:  "table key is NaN or infinite",
+			wantLine: 1,
+			wantCol:  2,
+		},
+		{
 			name:     "unfinished short string",
 			src:      `{"abc}`,
+			wantMsg:  "unfinished string literal",
+			wantLine: 1,
+			wantCol:  2,
+		},
+		{
+			name:     "short string ending in backslash",
+			src:      `{"abc\`,
 			wantMsg:  "unfinished string literal",
 			wantLine: 1,
 			wantCol:  2,

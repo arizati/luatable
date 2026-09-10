@@ -231,6 +231,13 @@ func (p *Parser) parseField(tb *tableBuilder, depth int) error {
 		if key == nil {
 			return p.errorf(openTok.offset, "table index is nil")
 		}
+		// Lua rejects a NaN key as well ("table index is NaN") and accepts an
+		// infinite one. This package rejects both: a NaN key could never be
+		// looked up again in the resulting Table, and an infinity has no
+		// literal the encoder could write back.
+		if f, isFloat := key.(float64); isFloat && (math.IsNaN(f) || math.IsInf(f, 0)) {
+			return p.errorf(openTok.offset, "table key is NaN or infinite")
+		}
 		normalized, ok := normalizeKey(key)
 		if !ok {
 			return p.errorf(openTok.offset, "unsupported table key type %T", key)
