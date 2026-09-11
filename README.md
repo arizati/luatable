@@ -1,8 +1,27 @@
 # luatable
 
-A pure Go reader and writer for Lua table constructors (Lua 5.1 – 5.5). No
-third-party dependencies, no code generation, no reflection magic — just parse
-a Lua table into a plain Go value, or generate one from Go data.
+A pure Go reader and writer for Lua table constructors (Lua 5.1 – 5.5), treated
+as a data format rather than as code. No third-party dependencies, no code
+generation, no reflection magic — just parse a table into a plain Go value, or
+generate one from Go data.
+
+A table constructor is the Lua equivalent of a JSON document: the notation a Lua
+program uses to write down configuration, fixtures and payloads. This package
+treats it that way. It lexes and parses the constructor into plain Go values the
+way a JSON decoder reads its input, and it evaluates nothing: there is no Lua VM,
+no bytecode and no code execution. Every value must be a literal or a nested
+table (`nil`, booleans, integers, floats, strings, tables), while anything that
+would need evaluation — variable references, function calls, arithmetic,
+concatenation — is rejected with a positioned syntax error.
+
+That distinction is the point. Reading such a file from inside Lua means
+executing it — `dofile`, `require`, or `load`/`loadstring` plus a call — which
+runs whatever the input contains, deliberately or not, whereas `luatable`
+extracts the data from the text alone. `Marshal` goes the other way and writes
+Go data back as a table literal for a real Lua program to load. Table syntax is
+not a portable interchange format — JSON may serve better when no Lua program is
+involved — but when the other side is Lua, it keeps the data readable on both
+sides.
 
 ```go
 value, err := luatable.Parse(`{ name = "demo", items = { 1, 2, 3 } }`)

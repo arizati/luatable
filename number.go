@@ -72,11 +72,15 @@ func parseHexNumber(s string) (any, error) {
 // hexadecimal literals with correct rounding. Accumulating the mantissa digit
 // by digit in float64 rounds at every step and drifts from the correctly
 // rounded result by up to one ULP once the mantissa exceeds 53 bits: against
-// 20000 random literals, strconv agreed with Lua 5.2, 5.3, 5.4, 5.5 and LuaJIT
-// on every single one, while the manual accumulation disagreed with all of them
-// on 9.4%. TestHexFloatMatchesLua repeats that comparison; it skips Lua 5.1,
-// whose lexer cannot read a hexadecimal float at all ("0x1.8p1" and even
-// "0x1.8" are syntax errors there).
+// 20000 random literals, strconv agreed with Lua 5.2, 5.3, 5.4 and 5.5 on
+// every single one, while the manual accumulation disagreed with all of them
+// on 9.4%. TestHexFloatMatchesLua repeats that comparison against every
+// interpreter it can find, and it reads each value back as "%a", an exact
+// rendering of the double, so the comparison holds bit for bit and no
+// tolerance is needed for LuaJIT, which formats with its own code and rounds
+// "%.17g" ties away from zero on distribution builds of 2.1.0~beta3. That
+// test skips Lua 5.1, whose lexer cannot read a hexadecimal float at all
+// ("0x1.8p1" and even "0x1.8" are syntax errors there).
 //
 // A missing binary exponent is supplied as "p0", because ParseFloat requires
 // one.
