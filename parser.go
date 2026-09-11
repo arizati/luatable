@@ -27,6 +27,18 @@ type Parser struct {
 	// always strict, because its output must be valid Lua.
 	StrictKeywords bool
 
+	// Lenient keeps parsing when a field cannot be decoded as a literal: the
+	// value is consumed and recorded as a Skipped instead of being rejected.
+	// A key that is not a literal is consumed as well, and its field is
+	// dropped, because a Table key can only be a literal.
+	//
+	// The zero value keeps the strict behaviour, which accepts only literals,
+	// nested tables, unary minus and parenthesized literals. Lenient is a
+	// recovery mode for data files that mix literals with code; it is not a
+	// validation mode, and it does not relax structural errors such as an
+	// unbalanced constructor or a missing value.
+	Lenient bool
+
 	src string
 	lex lexer
 }
@@ -159,6 +171,12 @@ func (p *Parser) parseTableConstructor(depth int) (*Table, error) {
 			return nil, p.errorf(p.lex.tok.offset,
 				"unexpected end of input, expected '}' to close the table constructor opened at offset %d", openTok.offset)
 		default:
+			// An operator here continues the value of the field, which is an
+			// expression the strict grammar does not accept.
+			if p.lex.tok.typ == tokenOperator {
+				return nil, p.errorf(p.lex.tok.offset,
+					"unsupported operator %q; only literals, nested tables and unary minus are supported", p.lex.tok.text)
+			}
 			return nil, p.errorf(p.lex.tok.offset, "expected ',' or '}' after table field, found %s", p.describeToken())
 		}
 	}
@@ -177,8 +195,24 @@ func (p *Parser) parseField(tb *tableBuilder, depth int) error {
 			return err
 		}
 		if p.lex.tok.typ != tokenAssign {
-			return p.errorf(tok.offset,
-				"unsupported expression %q; expected a literal, a nested table or an 'name = value' field", tok.text)
+			if !p.Lenient {
+				return p.errorf(tok.offset,
+					"unsupported expression %q; expected a literal, a nested table or an 'name = value' field", tok.text)
+			}
+			// An identifier that is not a key starts a positional field whose
+			// value is an expression ("f()", "string.format", "inf"). The
+			// identifier itself has been consumed, so a block keyword that
+			// opens the expression ("function") has to be counted here.
+			blocks := 0
+			if opensBlock(tok.text) {
+				blocks = 1
+			}
+			value, err := p.skipValue(tok.offset, blocks)
+			if err != nil {
+				return err
+			}
+			tb.append(value)
+			return nil
 		}
 		if p.StrictKeywords && reservedWords[tok.text] {
 			return p.errorf(tok.offset,
@@ -188,7 +222,7 @@ func (p *Parser) parseField(tb *tableBuilder, depth int) error {
 		if err := p.lex.err; err != nil {
 			return err
 		}
-		value, err := p.parseValue(depth)
+		value, err := p.parseFieldValue(depth)
 		if err != nil {
 			return err
 		}
@@ -202,12 +236,22 @@ func (p *Parser) parseField(tb *tableBuilder, depth int) error {
 			return err
 		}
 
+		keyStart := p.lex.tok.offset
 		key, err := p.parseValue(depth)
 		if err != nil {
-			return err
+			if !p.Lenient {
+				return err
+			}
+			return p.dropField(keyStart, depth)
 		}
 
 		if p.lex.tok.typ != tokenRBracket {
+			if p.Lenient {
+				// The key is an expression that only starts like a literal
+				// ("[1 + 2]"). The parser has consumed its first operand, so
+				// the rest of the key and the whole field are dropped.
+				return p.dropField(keyStart, depth)
+			}
 			return p.errorf(p.lex.tok.offset, "expected ']' to close the table key, found %s", p.describeToken())
 		}
 		p.lex.next()
@@ -223,12 +267,17 @@ func (p *Parser) parseField(tb *tableBuilder, depth int) error {
 			return err
 		}
 
-		value, err := p.parseValue(depth)
+		value, err := p.parseFieldValue(depth)
 		if err != nil {
 			return err
 		}
 
+		// A key that a Table cannot represent is dropped together with its
+		// field in lenient mode: there is no placeholder that could record it.
 		if key == nil {
+			if p.Lenient {
+				return nil
+			}
 			return p.errorf(openTok.offset, "table index is nil")
 		}
 		// Lua rejects a NaN key as well ("table index is NaN") and accepts an
@@ -236,10 +285,16 @@ func (p *Parser) parseField(tb *tableBuilder, depth int) error {
 		// looked up again in the resulting Table, and an infinity has no
 		// literal the encoder could write back.
 		if f, isFloat := key.(float64); isFloat && (math.IsNaN(f) || math.IsInf(f, 0)) {
+			if p.Lenient {
+				return nil
+			}
 			return p.errorf(openTok.offset, "table key is NaN or infinite")
 		}
 		normalized, ok := normalizeKey(key)
 		if !ok {
+			if p.Lenient {
+				return nil
+			}
 			return p.errorf(openTok.offset, "unsupported table key type %T", key)
 		}
 		tb.t.set(normalized, value)
@@ -247,7 +302,7 @@ func (p *Parser) parseField(tb *tableBuilder, depth int) error {
 
 	default:
 		// Positional field: part of the array section.
-		value, err := p.parseValue(depth)
+		value, err := p.parseFieldValue(depth)
 		if err != nil {
 			return err
 		}
@@ -385,6 +440,8 @@ func (p *Parser) describeToken() string {
 		return fmt.Sprintf("%q", t.text)
 	case tokenNumber:
 		return fmt.Sprintf("number literal %q", t.text)
+	case tokenOperator:
+		return fmt.Sprintf("'%s'", t.text)
 	default:
 		return t.typ.String()
 	}

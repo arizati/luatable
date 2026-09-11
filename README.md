@@ -49,7 +49,14 @@ fmt.Println(table["items"].([]any)) // [1 2 3]
 * Optional `return` prefix for Lua module files (`return { ... }`).
 * Precise error positions: byte offset, line and column.
 * Optional rich representation preserving exact key types and insertion order.
-* Safe against hostile input: bounded nesting depth, no panics (fuzz-tested).
+* **Path lookup**: `Get`, `GetAs[T]` and `GetSlice[T]` read one value without
+  converting the whole document.
+* **Lenient recovery**: `Parser.Lenient` records a value it cannot decode as a
+  `Skipped` and keeps the surrounding data, so a file that mixes literals with
+  code still loads.
+* Safe against hostile input: bounded nesting depth, no panics (fuzz-tested),
+  and nothing is ever evaluated. Only the strict mode also guarantees that every
+  value is a literal.
 * **Generation**: `Marshal` writes Go values back as Lua table literals that the
   parser reads back, with deterministic ordering and byte-exact string escaping.
 * Reserved-word-safe keys: `Marshal` quotes every key that Lua reserves, so
@@ -78,6 +85,9 @@ go get github.com/arizati/luatable
 A table that is not a pure array exposes its array part through decimal string
 keys (`"1"`, `"2"`, …), mirroring how JSON-like formats represent arrays inside
 objects. An empty table decodes to an empty map.
+
+In lenient mode a value the parser cannot decode appears as a `Skipped` instead;
+see [Values that are not literals](#values-that-are-not-literals).
 
 ```go
 luatable.Parse(`{ "a", "b", "c" }`)          // []any{"a", "b", "c"}
@@ -123,6 +133,94 @@ for _, entry := range table.Entries() {
 Use `luatable.ToInterface(v)` (or `Table.Interface`) to recursively convert a
 rich table into the generic representation.
 
+## Values that are not literals
+
+A Lua data file sometimes mixes data with code: a dumped table may hold a
+function reference or a `loadstring(...)` call next to its numbers and strings.
+`Parser.Lenient` keeps parsing such a file instead of rejecting it. A field value
+that cannot be decoded as a literal or a nested table is consumed and recorded
+as a `Skipped` value, which keeps its place in an array, and a table key that is
+not a literal makes the parser drop the whole field.
+
+```go
+var p luatable.Parser
+p.Lenient = true
+table, err := p.ParseTable(`{ id = 1, fn = loadstring("\27LJ") }`)
+if err != nil {
+    log.Fatal(err)
+}
+
+id, _ := table.Get("id") // int64(1)
+fn, _ := table.Get("fn") // luatable.Skipped{Text: `loadstring("\27LJ")`}
+```
+
+`Skipped.Text` is the raw source text, a substring of the input, so it costs
+nothing to keep and it shows what the field was. `Skipped.Offset` is positional
+metadata: it differs between two parses of the same data, so compare `Text` when
+comparing values.
+
+Lenient mode is a recovery mode, not a validation mode. It evaluates nothing,
+and only the errors that no recovery can pass are reported, positioned at the
+value that was being skipped: an unterminated string or comment, a missing field
+value (`{a = }`), and input that runs out before the value or the constructor
+ends. A value that merely fails to decode as a literal is recorded as `Skipped`
+rather than dropped, even when it is incomplete (`-` or `(1`). Skipping works on
+tokens, so recovery from input that is not valid Lua at all is best-effort: an
+unterminated construct can leave a later field attached to the wrong index. Use
+the default strict mode when a file has to contain nothing but literals.
+
+`Marshal` rejects a `Skipped` value, because writing the raw text back could
+emit code or text that is not valid Lua. `Encoder.EmitSkipped` lifts that check
+for text you trust, which is what lets a dump survive a round trip.
+
+## Reading a single value
+
+`Get`, `GetAs` and `GetSlice` read one value by path, without converting the rest
+of the document:
+
+```go
+port, ok, err := luatable.GetAs[int64](src, "servers", 1, "port")
+if err != nil {
+    return err // *SyntaxError: src is not a table constructor
+}
+if !ok {
+    return fmt.Errorf("servers[1].port is missing or not an integer")
+}
+```
+
+Each path element is a Lua key: a string selects a string key, an integer
+selects a positional field, a boolean selects a boolean key. Positional keys
+start at 1, as they do in Lua, and `1`, `int64(1)` and `1.0` select the same
+entry. A field whose value is `nil` is present, so a lookup reports `true` with a
+`nil` value; a missing path is not an error.
+
+| Function | Result |
+| --- | --- |
+| `Get(src, path...)` | the generic value, like `Parse` |
+| `GetAs[T](src, path...)` | a scalar of type `T`: `int64`, `float64`, `string` or `bool` |
+| `GetSlice[T](src, path...)` | a `[]T` from a pure array table, in index order |
+| `Table.GetPath(keys...)` | the rich value from an already parsed `*Table` |
+
+The typed variants follow Lua's number model: an integer is accepted as a
+`float64`, and a `float64` with an integral value in range is accepted as an
+`int64`, which is Lua's `math.tointeger`; nothing converts to or from a string.
+`GetSlice` converts every element or reports `false`, so it never returns a
+partially converted slice.
+
+A lookup parses in lenient mode and accepts an optional `return` prefix, because
+it is a query rather than a validation step; `Parse` and `ParseTable` remain the
+way to check a whole input. When several values come from the same input, parse
+once and walk:
+
+```go
+table, err := luatable.ParseTable(src)
+if err != nil {
+    log.Fatal(err)
+}
+host, _ := table.GetPath("servers", 1, "host")
+port, _ := table.GetPath("servers", 1, "port")
+```
+
 ## Generating Lua tables
 
 `Marshal` performs the opposite operation: it turns Go data into a Lua table
@@ -159,13 +257,17 @@ is useful:
 | `MaxDepth` | `0` → `DefaultMaxDepth` | nesting limit, mirrors the parser |
 | `TrailingComma` | `false` | write a `,` after the last field |
 | `UnsortedKeys` | `false` | `false` sorts map keys, keeping output reproducible |
+| `EmitSkipped` | `false` | write the raw text of a `Skipped` value back instead of rejecting it |
 
-Values that cannot be represented — `struct`, `func`, `chan`, `NaN`, `±Inf`, or
-a `uint64` that does not fit into `int64` — are rejected with an `*EncodeError`
-carrying the path of the offending value, for example `.servers[0].port`. An
-infinity is rejected even though a literal such as `1e400` happens to evaluate
-to one on every implementation tested: the manual leaves float overflow to the
-implementation, so the encoder will not build a value out of it.
+Values that cannot be represented — `struct`, `func`, `chan`, `NaN`, `±Inf`, a
+`Skipped` value, or a `uint64` that does not fit into `int64` — are rejected with
+an `*EncodeError` carrying the path of the offending value, for example
+`.servers[0].port`. An infinity is rejected even though a literal such as `1e400`
+happens to evaluate to one on every implementation tested: the manual leaves
+float overflow to the implementation, so the encoder will not build a value out
+of it. A `Skipped` value is rejected for the same reason, unless
+`Encoder.EmitSkipped` asks for its text; see
+[Values that are not literals](#values-that-are-not-literals).
 
 Round-trip guarantees:
 
@@ -231,7 +333,8 @@ string]], [=[level 2]=],
 Values must be literals, nested tables, unary minus or parenthesized literals.
 Anything requiring evaluation — variable references, function calls, arithmetic,
 concatenation (`math.huge`, `1 + 2`, `"a" .. "b"`) — is rejected with a
-`*SyntaxError`.
+`*SyntaxError`. Set `Parser.Lenient` to record such a value as a `Skipped`
+instead; see [Values that are not literals](#values-that-are-not-literals).
 
 ## Error handling
 
@@ -266,7 +369,10 @@ use an internal pool and are convenient for one-off parses.
 
 ## Limits
 
-* Only table constructors are parsed; arbitrary Lua statements are not.
+* Only table constructors are parsed; arbitrary Lua statements are not. A dump
+  that wraps its table in a chunk (`local t = {...}` … `return t`) or in a
+  `setmetatable` call is rejected even in lenient mode, because there is no
+  table constructor to return.
 * No metatables, functions, coroutines or variable evaluation.
 * In the generic map representation a numeric key and a text key with the same
   spelling collide (`[1]` and `["1"]` both become `"1"`). Use `ParseTable` when
@@ -280,6 +386,11 @@ use an internal pool and are convenient for one-off parses.
   key (`{end = 1}`), which the reference implementation rejects. Set
   `Parser.StrictKeywords` to reject those keys instead. The encoder is always
   strict, because its output has to be valid Lua.
+* `Parser.Lenient` recovers from a value it cannot decode; it is not a validation
+  mode. Only the strict parser guarantees that every value is a literal.
+* `Marshal` rejects a `Skipped` value, so a table parsed in lenient mode has to
+  be cleaned up, or written with `Encoder.EmitSkipped`, before it can be
+  encoded.
 
 ## Project layout
 
@@ -296,6 +407,8 @@ luatable/
 ├── string.go               short and long string decoding
 ├── table.go                Table / Entry and generic-structure conversion
 ├── parser.go               recursive-descent parser and depth control
+├── lenient.go              lenient mode: Skipped values and expression skipping
+├── selection.go            path lookup (Get, GetAs, GetSlice, Table.GetPath)
 ├── encode.go               Lua table generator (Marshal, Encoder, EncodeError)
 ├── pool.go                 ParserPool
 ├── handy.go                package-level convenience functions
@@ -303,7 +416,8 @@ luatable/
 └── testdata/
     ├── config.lua          configuration-table fixture
     ├── module.lua          "return { ... }" module fixture
-    └── comments.lua        comment-coverage fixture
+    ├── comments.lua        comment-coverage fixture
+    └── dumper.lua          DataDumper fixture, used by the lenient-mode test
 ```
 
 The library is a **single package**, so every `package luatable` source file and
@@ -320,11 +434,15 @@ go test ./...
 go test -race ./...
 go test -cover ./...
 go test -run=XXX -fuzz='^FuzzParse$' -fuzztime=30s .
+go test -run=XXX -fuzz='^FuzzParseLenient$' -fuzztime=30s .
 go test -run=XXX -fuzz='^FuzzMarshalString$' -fuzztime=30s .
 go test -run=XXX -bench=. .
 ```
 
 When a Lua interpreter is available on `PATH` (`lua`, `lua5.5`, … `luajit`), the
 suite also feeds the encoder output to it and checks that it compiles and
-evaluates to a table. That check is skipped when no interpreter is found and in
-`-short` mode.
+evaluates to a table, and it compares the hexadecimal float conversion with the
+interpreter's own `%a` rendering. The lenient-mode test additionally generates a
+real dump with `testdata/dumper.lua` for every interpreter that can run it (Lua
+5.1, a Lua 5.2 built with its compatibility options, or LuaJIT). Those checks are
+skipped when no interpreter is found and in `-short` mode.

@@ -46,7 +46,8 @@ func newEncodeError(path, format string, args ...any) *EncodeError {
 // int64, float64, string, []any, map[string]any and *Table), plus a few
 // convenience types such as int, uint, float32, []string and
 // map[string]string. Any other value is rejected with an *EncodeError; the
-// encoder never emits a literal that its own parser would reject.
+// encoder never emits a literal that its own parser would reject, unless
+// Encoder.EmitSkipped asks it to write the raw text of a Skipped value.
 //
 // Two values of that domain do not survive an exact round trip. NaN and the
 // infinities are rejected outright: no literal is specified to denote an
@@ -75,6 +76,17 @@ type Encoder struct {
 	// The field is the negation of "sort keys" so that the useful behaviour
 	// is the zero value.
 	UnsortedKeys bool
+
+	// EmitSkipped writes the raw source text of a Skipped value back instead
+	// of rejecting it. It is meant for regenerating a file that was parsed
+	// with Parser.Lenient, so that the fields the parser could not decode
+	// survive a round trip.
+	//
+	// The output is then no longer checked, and it is no longer guaranteed to
+	// be valid Lua or to be accepted by Parse: the text may be an expression
+	// the parser rejects, and it may be code, such as a call to loadstring.
+	// Use it only for text that is trusted.
+	EmitSkipped bool
 }
 
 // Marshal encodes v as a compact Lua table literal.
@@ -199,11 +211,30 @@ func (e *Encoder) encode(buf *bytes.Buffer, v any, depth int, path string) error
 		return e.encodeTable(buf, x, depth, path)
 	case Table:
 		return e.encodeTable(buf, &x, depth, path)
+	case Skipped:
+		return e.writeSkipped(buf, x, path)
 	default:
 		return newEncodeError(path,
 			"unsupported value type %T; convert it to nil, bool, int64, float64, string, []any, map[string]any or *Table", v)
 	}
 
+	return nil
+}
+
+// writeSkipped writes the raw text of a value the lenient parser skipped, when
+// Encoder.EmitSkipped asks for it. Nothing is written otherwise: the text can
+// be code or text that is not valid Lua, so it has to be an explicit choice.
+// An empty text is still rejected, because it would leave a hole in the output
+// such as "{a = }", which parses nowhere.
+func (e *Encoder) writeSkipped(buf *bytes.Buffer, s Skipped, path string) error {
+	if !e.EmitSkipped {
+		return newEncodeError(path,
+			"value %s was skipped by the lenient parser and cannot be encoded; set Encoder.EmitSkipped to write its text back", s)
+	}
+	if s.Text == "" {
+		return newEncodeError(path, "skipped value has no text to write back")
+	}
+	buf.WriteString(s.Text)
 	return nil
 }
 

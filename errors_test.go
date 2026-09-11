@@ -164,7 +164,7 @@ func TestParseErrors(t *testing.T) {
 		{
 			name:     "unsupported operator",
 			src:      "{a=1+2}",
-			wantMsg:  "unexpected character '+'",
+			wantMsg:  `unsupported operator "+"`,
 			wantLine: 1,
 			wantCol:  5,
 		},

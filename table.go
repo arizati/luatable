@@ -10,7 +10,8 @@ import (
 // Entry is a single key/value pair of a Table.
 //
 // Key is one of string, int64, float64 or bool. Value is one of nil, bool,
-// int64, float64, string, []any, map[string]any or *Table.
+// int64, float64, string, []any, map[string]any, *Table, or Skipped when the
+// parser ran in lenient mode.
 type Entry struct {
 	Key   any
 	Value any
@@ -226,6 +227,8 @@ func writeValue(b *strings.Builder, v any) {
 		b.WriteString(strconv.Quote(x))
 	case *Table:
 		x.writeTo(b)
+	case Skipped:
+		b.WriteString(x.String())
 	default:
 		fmt.Fprint(b, x)
 	}

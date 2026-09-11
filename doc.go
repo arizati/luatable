@@ -32,6 +32,7 @@ A parsed table is represented as an any holding one of:
 	string          for Lua string literals
 	[]any           for a pure array table (keys are exactly 1..n)
 	map[string]any  for any other table
+	Skipped         for a value the lenient parser could not decode
 
 When a table is not a pure array, its array part is exposed in the map using
 decimal string keys ("1", "2", ...), mirroring how JSON-like formats represent
@@ -70,6 +71,18 @@ Variable references, function calls, arithmetic and concatenation expressions
 (for example "math.huge" or "1 + 2") are rejected with a *SyntaxError that
 carries the byte offset, line and column of the offending construct.
 
+Set Parser.Lenient to keep parsing instead. Such a value is consumed and
+recorded as a Skipped, which keeps its position in an array, and a table key
+that is not a literal makes the parser drop the whole field. Lenient mode is a
+recovery mode for data files that mix literals with code; it is not a validation
+mode. Only the errors that no recovery can pass are reported, positioned at the
+value that was being skipped: an unterminated string or comment, a missing field
+value ("{a = }"), and input that runs out before the value or the constructor
+ends. A value that merely fails to decode as a literal is recorded as a Skipped
+instead, even when it is incomplete ("-" or "(1"). Skipping works on tokens, so
+recovery from input that is not valid Lua at all is best-effort: an unterminated
+construct can leave a later field attached to the wrong index.
+
 A leading UTF-8 byte order mark is likewise rejected as an unexpected
 character: it is not part of Lua's lexical grammar (Lua 5.2 and later strip
 one in loadfile, LuaJIT strips it everywhere, Lua 5.1 strips it nowhere), so
@@ -97,7 +110,10 @@ The encoder only emits literals and nested tables, so its output is always
 readable by Parse, and it sticks to forms that Lua 5.1 already understands.
 Values outside its domain (a struct, a func, a NaN, an infinity, a uint64 that
 does not fit into int64, ...) are rejected with an *EncodeError carrying the
-path of the offending value, instead of producing invalid Lua. Note the
+path of the offending value, instead of producing invalid Lua. A Skipped value
+is rejected as well; set Encoder.EmitSkipped to write its raw text back, which
+is what turns a value parsed with Parser.Lenient into a round trip, at the cost
+of no longer guaranteeing that the output is valid Lua. Note the
 asymmetry around infinity: Parse produces ±Inf from literals outside the float64
 range (1e400, 0x1p1024), while Marshal refuses to write one, because no literal
 is specified to denote an infinity -- the manual leaves float overflow to the
@@ -110,6 +126,21 @@ Pass a *Table to Marshal when exact key types and insertion order matter. A
 map[string]any can only express string keys, so [1] and ["1"] become
 indistinguishable, and its keys are emitted in sorted order so that the output
 stays reproducible.
+
+# Reading a single value
+
+Get, GetAs and GetSlice read one value by path, without converting the rest of
+the document:
+
+	port, ok, err := luatable.GetAs[int64](src, "servers", 1, "port")
+
+Each path element is a Lua key, so positional keys start at 1, and the typed
+variants follow Lua's number model: an int64 is accepted as a float64, and a
+float64 with an integral value in range is accepted as an int64. A lookup parses
+in lenient mode (see Parser.Lenient) and accepts an optional "return" prefix,
+because it is a query rather than a validation step; use Parse or ParseTable to
+check the whole input. When several values are needed from the same input, parse
+once with ParseTable and walk with Table.GetPath.
 
 # Example
 

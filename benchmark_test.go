@@ -57,6 +57,33 @@ func BenchmarkParseTable(b *testing.B) {
 	}
 }
 
+func BenchmarkGet(b *testing.B) {
+	src := benchmarkInputs["medium"]
+	b.SetBytes(int64(len(src)))
+
+	for b.Loop() {
+		if _, ok, err := Get(src, "item25", "name"); err != nil || !ok {
+			b.Fatalf("unexpected result: %v, ok = %v", err, ok)
+		}
+	}
+}
+
+func BenchmarkTableGetPath(b *testing.B) {
+	var p Parser
+	table, err := p.ParseTable(benchmarkInputs["medium"])
+	if err != nil {
+		b.Fatalf("unexpected error: %s", err)
+	}
+
+	b.SetBytes(int64(len(benchmarkInputs["medium"])))
+
+	for b.Loop() {
+		if _, ok := table.GetPath("item25", "name"); !ok {
+			b.Fatal("the path was not found")
+		}
+	}
+}
+
 func BenchmarkParseBytes(b *testing.B) {
 	src := []byte(benchmarkInputs["small"])
 

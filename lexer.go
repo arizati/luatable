@@ -21,6 +21,7 @@ const (
 	tokenKeyword                    // nil, true, false, return
 	tokenNumber                     // numeric literal
 	tokenString                     // string literal (raw text, including delimiters)
+	tokenOperator                   // operator or punctuation, e.g. ".." or "."
 )
 
 // String returns a human readable description of t, suitable for error
@@ -57,6 +58,8 @@ func (t tokenType) String() string {
 		return "number literal"
 	case tokenString:
 		return "string literal"
+	case tokenOperator:
+		return "operator"
 	default:
 		return "unknown token"
 	}
@@ -77,8 +80,11 @@ type token struct {
 // lexer performs on-demand tokenization of a Lua table constructor.
 //
 // The lexer is intentionally small: it only knows the lexical grammar shared
-// by Lua 5.1 - 5.5 (whitespace, comments, long brackets, strings and numbers)
-// and leaves all grammar decisions to the parser.
+// by Lua 5.1 - 5.5 (whitespace, comments, long brackets, strings, numbers and
+// Lua's operator and punctuation characters) and leaves all grammar decisions
+// to the parser. Operators are scanned only so that the parser can name them in
+// an error and so that the lenient parser can skip an expression; the strict
+// grammar itself accepts none of them.
 //
 // A leading UTF-8 byte order mark is deliberately not skipped: it is not part
 // of Lua's lexical grammar (Lua 5.2 and later strip one in loadfile, LuaJIT
@@ -155,6 +161,8 @@ func (l *lexer) next() {
 		l.scanNumber()
 	case isNameStart(c):
 		l.scanName()
+	case isOperatorByte(c):
+		l.scanOperator()
 	default:
 		r, _ := utf8.DecodeRuneInString(l.src[start:])
 		l.err = newSyntaxError(l.src, start, "unexpected character %q", r)
@@ -354,6 +362,19 @@ func (l *lexer) scanName() {
 	l.tok = token{typ: typ, text: text, offset: start}
 }
 
+// scanOperator scans a run of Lua's operator and punctuation characters. The
+// strict grammar accepts none of them, but they have to be scanned as tokens so
+// that the parser can report what it found ("found '..'") and so that the
+// lenient parser can skip an expression. Scanning a run as a single token keeps
+// both of those operations simple.
+func (l *lexer) scanOperator() {
+	start := l.pos
+	for l.pos < len(l.src) && isOperatorByte(l.src[l.pos]) {
+		l.pos++
+	}
+	l.tok = token{typ: tokenOperator, text: l.src[start:l.pos], offset: start}
+}
+
 func isSpace(c byte) bool {
 	switch c {
 	case ' ', '\t', '\n', '\r', '\v', '\f':
@@ -369,6 +390,18 @@ func isDigit(c byte) bool {
 
 func isHexDigit(c byte) bool {
 	return isDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+// isOperatorByte reports whether c is one of the characters Lua uses as an
+// operator or punctuation. The set is limited to Lua's own characters so that
+// everything else stays an "unexpected character" error in both modes.
+func isOperatorByte(c byte) bool {
+	switch c {
+	case '+', '*', '/', '%', '^', '#', '&', '~', '|', '<', '>', '.', ':':
+		return true
+	default:
+		return false
+	}
 }
 
 func isNameStart(c byte) bool {

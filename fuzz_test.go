@@ -100,6 +100,87 @@ func FuzzParse(f *testing.F) {
 	})
 }
 
+// containsSkipped reports whether v holds a Skipped value anywhere inside it,
+// in either the generic or the rich table representation.
+func containsSkipped(v any) bool {
+	switch x := v.(type) {
+	case Skipped:
+		return true
+	case []any:
+		for _, e := range x {
+			if containsSkipped(e) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, e := range x {
+			if containsSkipped(e) {
+				return true
+			}
+		}
+	case *Table:
+		for _, e := range x.entries {
+			if containsSkipped(e.Value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// FuzzParseLenient checks that the recovery mode terminates and does not panic
+// whatever it is fed. Skipping works on tokens and is iterative, so input that
+// no Lua implementation would accept still ends in a result or an error.
+func FuzzParseLenient(f *testing.F) {
+	for _, s := range fuzzSeeds {
+		f.Add(s)
+	}
+	for _, s := range []string{
+		`{f = function() return 1, 2 end}`,
+		`{a = string.format, b = loadstring("\27LJ"), c = math.huge}`,
+		`{a = 1 + 2, b = f(g()), c = #t, d = "x" .. "y"}`,
+		`{1, f(), 3}`,
+		`{[f()] = 1, ok = 2}`,
+	} {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, s string) {
+		var p Parser
+		p.Lenient = true
+		table, err := p.ParseTable(s)
+		if err != nil {
+			return
+		}
+
+		// None of these conversions may panic for a recovered table.
+		_ = table.Interface()
+		_ = table.Map()
+		_ = table.Array()
+		_ = table.Len()
+		_ = table.Entries()
+		_ = table.String()
+
+		// A skipped value has no representation in Lua source, so the encoder
+		// must reject it rather than write the raw text back.
+		if containsSkipped(table) {
+			if _, err := Marshal(table); err == nil {
+				t.Fatal("Marshal accepted a rich table holding a Skipped value")
+			}
+			if _, err := Marshal(table.Interface()); err == nil {
+				t.Fatal("Marshal accepted a generic value holding a Skipped value")
+			}
+
+			// Writing the text back is an explicit choice. It may fail for
+			// other reasons (an infinity elsewhere, the depth limit), and its
+			// output is not promised to be valid Lua, but it must not panic.
+			e := Encoder{EmitSkipped: true}
+			_, _ = e.Marshal(table)
+			_, _ = e.Marshal(table.Interface())
+		}
+	})
+}
+
 func FuzzParseTable(f *testing.F) {
 	for _, s := range fuzzSeeds {
 		f.Add(s)
