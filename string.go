@@ -85,12 +85,18 @@ func decodeShortString(raw string) (string, int, error) {
 			b.WriteByte('\'')
 			i++
 		case '\n':
-			b.WriteByte('\n')
+			// A line continuation writes one newline. A mixed pair
+			// ("\n\r" or "\r\n") is a single newline in Lua, so the second
+			// byte is consumed as well; two equal bytes would be two
+			// newlines, but the scanner never lets such a body through.
 			i++
+			if i < len(body) && body[i] == '\r' {
+				i++
+			}
+			b.WriteByte('\n')
 		case '\r':
-			if i+1 < len(body) && body[i+1] == '\n' {
-				i += 2
-			} else {
+			i++
+			if i < len(body) && body[i] == '\n' {
 				i++
 			}
 			b.WriteByte('\n')

@@ -39,7 +39,8 @@ fmt.Println(table["items"].([]any)) // [1 2 3]
 * Identifier keys (`name = value`), bracket keys (`[expr] = value`), string
   keys, integer / float / boolean keys.
 * Short strings (`'...'`, `"..."`) with every Lua escape sequence, including
-  `\ddd`, `\xHH`, `\z` and `\u{XXXX}`.
+  `\ddd`, `\xHH`, `\z`, `\u{XXXX}` and line continuations (`\` before LF, CR,
+  CRLF or LFCR).
 * Long strings (`[[...]]`, `[=[...]=]`, arbitrary levels).
 * Decimal, hexadecimal and hexadecimal-float literals (Lua 5.2+), including
   exponent forms.
@@ -377,7 +378,8 @@ use an internal pool and are convenient for one-off parses.
 * In the generic map representation a numeric key and a text key with the same
   spelling collide (`[1]` and `["1"]` both become `"1"`). Use `ParseTable` when
   that distinction matters.
-* Columns are counted in bytes, not Unicode code points.
+* Columns are counted in bytes, not Unicode code points. A line break is LF,
+  CR, CRLF or LFCR, as in Lua.
 * Nesting depth is limited by `Parser.MaxDepth` (default `DefaultMaxDepth`, 300)
   and, symmetrically, by `Encoder.MaxDepth`.
 * The encoder never writes long strings (`[[...]]`); strings are always emitted
@@ -396,7 +398,10 @@ use an internal pool and are convenient for one-off parses.
 
 ```
 luatable/
+├── .gitattributes          LF line endings in the repository and in checkouts
 ├── .gitignore
+├── .github/workflows/
+│   └── test.yml            CI: format, vet, race, coverage gate, fuzz smoke
 ├── go.mod                  module definition, no third-party dependencies
 ├── README.md
 ├── doc.go                  package documentation
@@ -411,13 +416,15 @@ luatable/
 ├── selection.go            path lookup (Get, GetAs, GetSlice, Table.GetPath)
 ├── encode.go               Lua table generator (Marshal, Encoder, EncodeError)
 ├── pool.go                 ParserPool
-├── handy.go                package-level convenience functions
+├── convenience.go          package-level convenience functions
 ├── *_test.go               unit, example, fuzz and benchmark tests
+├── *_lua_test.go           oracle tests run against installed Lua interpreters
 └── testdata/
     ├── config.lua          configuration-table fixture
     ├── module.lua          "return { ... }" module fixture
     ├── comments.lua        comment-coverage fixture
-    └── dumper.lua          DataDumper fixture, used by the lenient-mode test
+    ├── dumper.lua          DataDumper fixture, used by the lenient-mode test
+    └── kitchen_sink.lua    every supported construct, used by the fixture tests
 ```
 
 The library is a **single package**, so every `package luatable` source file and
@@ -444,5 +451,6 @@ suite also feeds the encoder output to it and checks that it compiles and
 evaluates to a table, and it compares the hexadecimal float conversion with the
 interpreter's own `%a` rendering. The lenient-mode test additionally generates a
 real dump with `testdata/dumper.lua` for every interpreter that can run it (Lua
-5.1, a Lua 5.2 built with its compatibility options, or LuaJIT). Those checks are
-skipped when no interpreter is found and in `-short` mode.
+5.1, a Lua 5.2 built with its compatibility options, or LuaJIT). Those checks live
+in the `*_lua_test.go` files, and they are skipped when no interpreter is found
+and in `-short` mode.

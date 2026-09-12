@@ -261,6 +261,12 @@ func (l *lexer) readLongBracket(level int) (raw, content string, ok bool) {
 
 // scanShortString scans a single- or double-quoted string literal. Escape
 // sequences are skipped but not interpreted; decoding happens later.
+//
+// The "\z" escape is the one exception: it has to be consumed here, because
+// the whitespace it skips may contain a line break, and a raw line break would
+// otherwise be mistaken for the premature end of the string. Consuming the
+// span changes nothing for the decoder, which sees the same bytes and applies
+// the same skip.
 func (l *lexer) scanShortString() {
 	start := l.pos
 	quote := l.src[l.pos]
@@ -281,9 +287,27 @@ func (l *lexer) scanShortString() {
 				l.err = newSyntaxError(l.src, start, "unfinished string literal")
 				return
 			}
-			// "\<newline>" is a valid line continuation.
-			if l.src[l.pos] == '\r' && l.peek(1) == '\n' {
+			// "\z" skips the following span of whitespace, including line
+			// breaks, exactly as Lua 5.2 and later do.
+			if l.src[l.pos] == 'z' {
+				l.pos++
+				for l.pos < len(l.src) && isSpace(l.src[l.pos]) {
+					l.pos++
+				}
+				continue
+			}
+			// "\<newline>" is a valid line continuation. Lua reads a mixed
+			// pair as one newline and consumes both bytes ("\r\n" and
+			// "\n\r"), while a lone CR or LF is a newline on its own. Two
+			// equal bytes are two newlines, so the second one is left to the
+			// caller, which reports it as an unterminated string.
+			switch {
+			case l.src[l.pos] == '\r' && l.peek(1) == '\n',
+				l.src[l.pos] == '\n' && l.peek(1) == '\r':
 				l.pos += 2
+				continue
+			case l.src[l.pos] == '\r', l.src[l.pos] == '\n':
+				l.pos++
 				continue
 			}
 			l.pos++

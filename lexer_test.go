@@ -217,3 +217,38 @@ func TestLexerEscapedQuoteIsNotTerminator(t *testing.T) {
 		t.Fatalf("unexpected raw text %q", got[0].text)
 	}
 }
+
+// TestLexerZEscapeSpansLineBreaks covers the "\z" escape when the whitespace
+// it skips contains a line break. Lua 5.2 and later accept the construct, so
+// the line break must not end the token: the scanner has to consume the
+// whitespace, and the raw text keeps it for decodeShortString, which applies
+// the same skip.
+func TestLexerZEscapeSpansLineBreaks(t *testing.T) {
+	src := "\"a\\z\n\t b\"" // "a\z<LF><TAB><SP>b"
+	got := lexAll(t, src)
+	if len(got) != 1 {
+		t.Fatalf("unexpected token count; got %d; want 1", len(got))
+	}
+	if got[0].typ != tokenString || got[0].text != src {
+		t.Fatalf("unexpected token %#v; want the raw text %q spanning the line break", got[0], src)
+	}
+
+	value, _, err := decodeStringLiteral(got[0].text)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if value != "ab" {
+		t.Fatalf("decoded value = %q; want %q", value, "ab")
+	}
+
+	// Running out of input while the escape skips whitespace is still an
+	// unterminated string.
+	unfinished := &lexer{src: "\"a\\z   "}
+	unfinished.next()
+	if unfinished.err == nil {
+		t.Fatal("expecting an unterminated string error")
+	}
+	if !strings.Contains(unfinished.err.Msg, "unfinished string literal") {
+		t.Fatalf("unexpected error message: %s", unfinished.err.Msg)
+	}
+}

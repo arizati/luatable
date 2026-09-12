@@ -1,0 +1,11 @@
+# Normalize line endings to LF in the repository and in every checkout.
+#
+# The parser distinguishes LF, CR, CRLF and LFCR, and the fixtures under
+# testdata/ are compared byte for byte, so a checkout that rewrites them
+# (core.autocrlf on Windows, for example) would change what the tests see.
+* text=auto eol=lf
+
+*.go   text eol=lf
+*.lua  text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf

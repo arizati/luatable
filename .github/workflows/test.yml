@@ -4,13 +4,25 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Weekly fuzz smoke run, Mondays at 03:00 UTC.
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Windows has no Lua packages under the probed names, so the oracle tests
+    # skip themselves there; the job still exercises the in-process suite and
+    # the line-ending policy on a second platform.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -22,12 +34,46 @@ jobs:
       # skip any that are absent, so installing them widens coverage.
       # Lua 5.5 is not packaged for Ubuntu yet and is skipped.
       - name: Install Lua interpreters
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y lua5.1 lua5.2 lua5.3 lua5.4 luajit
 
+      - name: Format
+        if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l .)"
+
       - name: Vet
         run: go vet ./...
 
+      - name: Test with the race detector and a coverage gate
+        if: runner.os == 'Linux'
+        run: |
+          go test -count=1 -race -coverprofile=coverage.out ./...
+          coverage=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}')
+          echo "total coverage: $coverage"
+          if [ "$coverage" != "100.0%" ]; then
+            echo "coverage dropped below 100.0%" >&2
+            exit 1
+          fi
+
       - name: Test
+        if: runner.os != 'Linux'
         run: go test -count=1 ./...
+
+  fuzz:
+    # A fuzz run is too slow for every push; it runs weekly and on demand.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Fuzz smoke
+        run: |
+          go test -run=XXX -fuzz='^FuzzParse$' -fuzztime=30s .
+          go test -run=XXX -fuzz='^FuzzParseLenient$' -fuzztime=30s .
+          go test -run=XXX -fuzz='^FuzzMarshalString$' -fuzztime=30s .

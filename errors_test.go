@@ -332,3 +332,78 @@ func TestTruncate(t *testing.T) {
 		t.Fatalf("unexpected truncate result: %q", got)
 	}
 }
+
+// TestPositionAtNewlineForms checks that line and column are derived the way
+// Lua reads line breaks: LF, CR, CRLF and LFCR each end a line, while two
+// equal bytes are two line breaks.
+func TestPositionAtNewlineForms(t *testing.T) {
+	cases := []struct {
+		src      string
+		offset   int
+		wantLine int
+		wantCol  int
+	}{
+		// A lone carriage return is a line break.
+		{"a\rb", 0, 1, 1},
+		{"a\rb", 2, 2, 1},
+		{"a\rb", 3, 2, 2},
+
+		// CRLF is one line break, even from inside it.
+		{"a\r\nb", 2, 2, 1},
+		{"a\r\nb", 3, 2, 1},
+		{"a\r\nb", 4, 2, 2},
+
+		// LFCR is one line break as well.
+		{"a\n\rb", 2, 2, 1},
+		{"a\n\rb", 3, 2, 1},
+		{"a\n\rb", 4, 2, 2},
+
+		// Two equal bytes are two line breaks.
+		{"a\n\nb", 3, 3, 1},
+		{"a\r\rb", 3, 3, 1},
+		{"a\r\n\r\nb", 5, 3, 1},
+		{"a\r\n\r\nb", 6, 3, 2},
+	}
+
+	for _, tc := range cases {
+		gotLine, gotCol := positionAt(tc.src, tc.offset)
+		if gotLine != tc.wantLine || gotCol != tc.wantCol {
+			t.Errorf("positionAt(%q, %d) = (%d, %d); want (%d, %d)",
+				tc.src, tc.offset, gotLine, gotCol, tc.wantLine, tc.wantCol)
+		}
+	}
+}
+
+// TestSyntaxErrorPositionUsesEveryNewlineForm checks the user-visible effect:
+// an error in a file written with CR-only line endings is reported on the line
+// it really is on, just as in a CRLF, LFCR or LF file.
+func TestSyntaxErrorPositionUsesEveryNewlineForm(t *testing.T) {
+	cases := []struct {
+		name     string
+		src      string
+		wantLine int
+		wantCol  int
+	}{
+		{"LF", "{a =\n}", 2, 1},
+		{"CR", "{a =\r}", 2, 1},
+		{"CRLF", "{a =\r\n}", 2, 1},
+		{"LFCR", "{a =\n\r}", 2, 1},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(tc.src)
+			if err == nil {
+				t.Fatalf("expecting an error for %q", tc.src)
+			}
+			var se *SyntaxError
+			if !errors.As(err, &se) {
+				t.Fatalf("unexpected error type %T", err)
+			}
+			if se.Line != tc.wantLine || se.Column != tc.wantCol {
+				t.Fatalf("error at line %d, column %d; want line %d, column %d (%s)",
+					se.Line, se.Column, tc.wantLine, tc.wantCol, se.Msg)
+			}
+		})
+	}
+}

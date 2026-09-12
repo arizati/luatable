@@ -97,8 +97,8 @@ func GetSlice[T Scalar](src string, path ...any) ([]T, bool, error) {
 // lenient mode and accepts an optional "return" prefix, because a value that
 // cannot be decoded elsewhere in the input must not stop the lookup.
 func getValue(src string, path ...any) (any, bool, error) {
-	p := handyPool.Get()
-	defer handyPool.Put(p)
+	p := defaultPool.Get()
+	defer defaultPool.Put(p)
 	p.Lenient = true
 	p.AllowReturnPrefix = true
 
