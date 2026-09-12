@@ -41,18 +41,38 @@ type Parser struct {
 
 	src string
 	lex lexer
+
+	// newSink builds the sink that collects one table constructor. Parse
+	// selects the generic sink and ParseTable the rich one; the recursion is
+	// the same for both.
+	newSink func() tableSink
+
+	// sink is the sink of the table constructor that is currently open.
+	// parseTableConstructor saves and restores it around each table, so a
+	// nested table gets its own sink.
+	//
+	// It is a field rather than a parameter because parseField, which stores
+	// every field, cannot carry it as an interface parameter without that
+	// parameter escaping to the heap once per table.
+	sink tableSink
+
+	// next is the array index that the next positional field of the open table
+	// constructor receives. It counts the positional fields of that
+	// constructor only, as Lua does, and parseTableConstructor saves and
+	// restores it along with the sink.
+	next int64
 }
 
 // Parse parses s, which must contain a single Lua table constructor, and
 // returns the generic Go representation of that table.
 //
+// Parse builds that representation directly, without constructing a *Table
+// first; use ParseTable when exact key types or entry order are needed.
+//
 // See the package documentation for the mapping between Lua and Go values.
 func (p *Parser) Parse(s string) (any, error) {
-	t, err := p.ParseTable(s)
-	if err != nil {
-		return nil, err
-	}
-	return t.Interface(), nil
+	p.newSink = newGenericSink
+	return p.parse(s)
 }
 
 // ParseBytes parses b as a Lua table constructor. See Parse.
@@ -63,6 +83,20 @@ func (p *Parser) ParseBytes(b []byte) (any, error) {
 // ParseTable parses s and returns the rich *Table representation, preserving
 // exact key types and insertion order.
 func (p *Parser) ParseTable(s string) (*Table, error) {
+	p.newSink = newTableSink
+
+	value, err := p.parse(s)
+	if err != nil {
+		return nil, err
+	}
+
+	// The rich sink stores a *Table, so the assertion cannot fail.
+	return value.(*Table), nil
+}
+
+// parse parses s with the sink that p.newSink selects and returns its result:
+// a *Table for the rich sink, a []any or map[string]any for the generic one.
+func (p *Parser) parse(s string) (any, error) {
 	p.src = s
 	p.lex = lexer{src: s}
 	p.lex.next()
@@ -115,26 +149,48 @@ func (p *Parser) maxDepth() int {
 }
 
 // parseTableConstructor parses "{ [fieldlist] }". The current token must be
-// the opening brace.
-func (p *Parser) parseTableConstructor(depth int) (*Table, error) {
+// the opening brace. It returns what the selected sink produces for the table:
+// a *Table, or the generic representation.
+func (p *Parser) parseTableConstructor(depth int) (any, error) {
 	if depth > p.maxDepth() {
 		return nil, p.errorf(p.lex.tok.offset, "table nesting depth exceeds the maximum of %d", p.maxDepth())
 	}
 
-	openTok := p.lex.tok
+	// Suspend the sink and the field index of the enclosing table and restore
+	// them on the way out. At the top level both are zero, so a finished parse
+	// leaves the parser holding no reference to its result.
+	outerSink, outerNext := p.sink, p.next
+	p.sink, p.next = p.newSink(), 0
+
+	value, err := p.parseTableBody(depth, p.lex.tok)
+
+	p.sink, p.next = outerSink, outerNext
+	return value, err
+}
+
+// storePositional adds a positional field to the open sink, under the next
+// array index.
+func (p *Parser) storePositional(value any) {
+	p.next++
+	p.sink.positional(p.next, value)
+}
+
+// parseTableBody parses the fields of the table constructor that p.sink
+// collects, up to and including its closing '}'. openTok is its opening brace.
+// It is separate from parseTableConstructor so that the sink has a single
+// save/restore point.
+func (p *Parser) parseTableBody(depth int, openTok token) (any, error) {
 	p.lex.next()
 	if err := p.lex.err; err != nil {
 		return nil, err
 	}
-
-	tb := newTableBuilder()
 
 	if p.lex.tok.typ == tokenRBrace {
 		p.lex.next()
 		if err := p.lex.err; err != nil {
 			return nil, err
 		}
-		return tb.build(), nil
+		return p.sink.result(), nil
 	}
 
 	for {
@@ -143,7 +199,7 @@ func (p *Parser) parseTableConstructor(depth int) (*Table, error) {
 				"unexpected end of input, expected '}' to close the table constructor opened at offset %d", openTok.offset)
 		}
 
-		if err := p.parseField(tb, depth); err != nil {
+		if err := p.parseField(depth); err != nil {
 			return nil, err
 		}
 
@@ -159,14 +215,14 @@ func (p *Parser) parseTableConstructor(depth int) (*Table, error) {
 				if err := p.lex.err; err != nil {
 					return nil, err
 				}
-				return tb.build(), nil
+				return p.sink.result(), nil
 			}
 		case tokenRBrace:
 			p.lex.next()
 			if err := p.lex.err; err != nil {
 				return nil, err
 			}
-			return tb.build(), nil
+			return p.sink.result(), nil
 		case tokenEOF:
 			return nil, p.errorf(p.lex.tok.offset,
 				"unexpected end of input, expected '}' to close the table constructor opened at offset %d", openTok.offset)
@@ -182,8 +238,9 @@ func (p *Parser) parseTableConstructor(depth int) (*Table, error) {
 	}
 }
 
-// parseField parses a single field of a table constructor and stores it in tb.
-func (p *Parser) parseField(tb *tableBuilder, depth int) error {
+// parseField parses a single field of a table constructor and stores it in the
+// open sink.
+func (p *Parser) parseField(depth int) error {
 	tok := p.lex.tok
 
 	switch tok.typ {
@@ -211,7 +268,7 @@ func (p *Parser) parseField(tb *tableBuilder, depth int) error {
 			if err != nil {
 				return err
 			}
-			tb.append(value)
+			p.storePositional(value)
 			return nil
 		}
 		if p.StrictKeywords && reservedWords[tok.text] {
@@ -226,7 +283,7 @@ func (p *Parser) parseField(tb *tableBuilder, depth int) error {
 		if err != nil {
 			return err
 		}
-		tb.set(tok.text, value)
+		p.sink.keyed(tok.text, value)
 		return nil
 
 	case tokenLBracket:
@@ -295,9 +352,14 @@ func (p *Parser) parseField(tb *tableBuilder, depth int) error {
 			if p.Lenient {
 				return nil
 			}
-			return p.errorf(openTok.offset, "unsupported table key type %T", key)
+			// A nested table is the only key that reaches this point: a nil
+			// and a non-finite float key are rejected above, and no other
+			// expression parses as a key. It is named in Lua terms rather than
+			// by its Go type, which differs between the representations ("a
+			// *Table" and a map), so that both report the same problem.
+			return p.errorf(openTok.offset, "a table cannot be used as a table key")
 		}
-		tb.t.set(normalized, value)
+		p.sink.keyed(normalized, value)
 		return nil
 
 	default:
@@ -306,7 +368,7 @@ func (p *Parser) parseField(tb *tableBuilder, depth int) error {
 		if err != nil {
 			return err
 		}
-		tb.append(value)
+		p.storePositional(value)
 		return nil
 	}
 }

@@ -433,3 +433,77 @@ func TestMarshalRejectsNonFiniteTableKey(t *testing.T) {
 		}
 	}
 }
+
+// TestMarshalMapWithManyKeys covers the key list of a map with more keys than
+// the encoder keeps on its stack: the slice is then allocated once, with the
+// exact size, instead of growing.
+func TestMarshalMapWithManyKeys(t *testing.T) {
+	value := map[string]any{}
+	for i, key := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"} {
+		value[key] = int64(i)
+	}
+
+	out, err := Marshal(value)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	back, err := Parse(string(out))
+	if err != nil {
+		t.Fatalf("Marshal produced unparseable output %s: %s", out, err)
+	}
+	if !reflect.DeepEqual(back, value) {
+		t.Fatalf("round trip changed the value; got %#v; want %#v", back, value)
+	}
+}
+
+// TestMarshalNilTable pins the nil branch of the entry accessor: a typed nil
+// *Table encodes as an empty table, as it did while the encoder still used the
+// copying accessor.
+func TestMarshalNilTable(t *testing.T) {
+	var table *Table
+
+	got, err := Marshal(table)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if string(got) != "{}" {
+		t.Fatalf("Marshal(nil *Table) = %s; want {}", got)
+	}
+}
+
+// TestMarshalErrorPathForEveryTableKeyKind pins the rendered EncodeError.Path
+// for a failure behind each kind of Table key. The path is built lazily while
+// an error is reported, so every key kind has to render itself exactly the way
+// the eagerly built paths used to.
+func TestMarshalErrorPathForEveryTableKeyKind(t *testing.T) {
+	cases := []struct {
+		name string
+		key  any
+		want string
+	}{
+		{"identifier string key", "a", ".a"},
+		{"quoted string key", "max-connections", `["max-connections"]`},
+		{"integer key", int64(7), "[7]"},
+		{"negative integer key", int64(-3), "[-3]"},
+		{"float key", 1.5, "[1.5]"},
+		{"true key", true, "[true]"},
+		{"false key", false, "[false]"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// An unsupported value inside the field forces the error path.
+			table := &Table{entries: []Entry{{Key: tc.key, Value: struct{}{}}}}
+
+			_, err := Marshal(table)
+			var ee *EncodeError
+			if !errors.As(err, &ee) {
+				t.Fatalf("error %T is not an *EncodeError: %s", err, err)
+			}
+			if ee.Path != tc.want {
+				t.Fatalf("path = %q; want %q", ee.Path, tc.want)
+			}
+		})
+	}
+}

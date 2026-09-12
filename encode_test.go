@@ -870,3 +870,128 @@ func TestMarshalQuotesReservedWordsInsideTables(t *testing.T) {
 		t.Fatalf("unexpected String output: %s", got)
 	}
 }
+
+// TestAppendMarshal checks the append variant against Marshal, the reuse of one
+// destination across calls, and the contract that a failed encode leaves the
+// destination alone.
+func TestAppendMarshal(t *testing.T) {
+	values := []any{
+		map[string]any{"name": "demo", "tags": []any{"a", "b"}},
+		[]any{int64(1), 2.5, "x", nil, true},
+		MustParseTable(`{list = {1, 2, 3}, ["end"] = true}`),
+		"plain string",
+		int64(0),
+	}
+
+	enc := new(Encoder)
+
+	t.Run("matches Marshal", func(t *testing.T) {
+		for _, v := range values {
+			want, err := Marshal(v)
+			if err != nil {
+				t.Fatalf("Marshal(%#v) failed: %s", v, err)
+			}
+
+			got, err := enc.AppendMarshal(nil, v)
+			if err != nil {
+				t.Fatalf("AppendMarshal(%#v) failed: %s", v, err)
+			}
+			if string(got) != string(want) {
+				t.Fatalf("AppendMarshal(%#v) = %s; want %s", v, got, want)
+			}
+		}
+	})
+
+	t.Run("reuses one destination", func(t *testing.T) {
+		buf := make([]byte, 0, 256)
+
+		for _, v := range values {
+			want, err := Marshal(v)
+			if err != nil {
+				t.Fatalf("Marshal(%#v) failed: %s", v, err)
+			}
+
+			// Reslicing to zero length keeps the capacity, which is the
+			// documented way to encode into a reused buffer.
+			buf, err = enc.AppendMarshal(buf[:0], v)
+			if err != nil {
+				t.Fatalf("AppendMarshal(%#v) failed: %s", v, err)
+			}
+			if string(buf) != string(want) {
+				t.Fatalf("AppendMarshal into a reused buffer = %s; want %s", buf, want)
+			}
+		}
+	})
+
+	t.Run("appends after existing content", func(t *testing.T) {
+		buf := []byte("prefix:")
+		var err error
+
+		buf, err = enc.AppendMarshal(buf, int64(1))
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err)
+		}
+		buf, err = enc.AppendMarshal(buf, "two")
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err)
+		}
+
+		if got, want := string(buf), `prefix:1"two"`; got != want {
+			t.Fatalf("accumulated output = %q; want %q", got, want)
+		}
+	})
+
+	t.Run("a failed encode leaves dst unchanged", func(t *testing.T) {
+		dst := []byte("unchanged")
+
+		got, err := enc.AppendMarshal(dst, math.NaN())
+		if err == nil {
+			t.Fatal("expecting an error")
+		}
+		var ee *EncodeError
+		if !errors.As(err, &ee) {
+			t.Fatalf("error %T is not an *EncodeError: %s", err, err)
+		}
+		if string(got) != "unchanged" {
+			t.Fatalf("dst after a failed encode = %q; want %q", got, "unchanged")
+		}
+	})
+}
+
+// TestEncoderReusesMapKeyLists covers the per-depth key scratch of the encoder:
+// the first map with more than eight keys allocates the list, a later larger
+// map grows it, a smaller one reuses it, and the output stays identical to a
+// fresh encoder's on every pass.
+func TestEncoderReusesMapKeyLists(t *testing.T) {
+	records := func(n int, tag string) map[string]any {
+		m := make(map[string]any, n)
+		for i := range n {
+			m[fmt.Sprintf("k%02d-%s", i, tag)] = int64(i)
+		}
+		return m
+	}
+
+	// The three maps sit at the same depth, so they share one scratch slot:
+	// 12 keys allocate it, 20 grow it, and 9 reuse it.
+	value := map[string]any{
+		"first":  records(12, "a"),
+		"second": records(20, "b"),
+		"third":  records(9, "c"),
+	}
+
+	want, err := Marshal(value)
+	if err != nil {
+		t.Fatalf("Marshal failed: %s", err)
+	}
+
+	enc := new(Encoder)
+	for pass := range 3 {
+		got, err := enc.Marshal(value)
+		if err != nil {
+			t.Fatalf("pass %d failed: %s", pass, err)
+		}
+		if string(got) != string(want) {
+			t.Fatalf("pass %d differs from a fresh encoder:\n got %s\nwant %s", pass, got, want)
+		}
+	}
+}

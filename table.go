@@ -29,32 +29,35 @@ type Table struct {
 	index   map[any]int
 }
 
-// tableBuilder accumulates fields while a table constructor is parsed.
+// tableBuilder is the rich tableSink: it accumulates fields in a *Table, so
+// that the exact key types and the insertion order survive.
+//
+// The table is the only thing the builder holds. The index of the next
+// positional field belongs to the constructor, not to the representation, so
+// the parser keeps it; that leaves the builder small enough that building a
+// table costs no more than the table itself.
 type tableBuilder struct {
-	t *Table
-
-	// next is the index assigned to the next positional (array) field.
-	next int64
+	t Table
 }
 
 func newTableBuilder() *tableBuilder {
-	return &tableBuilder{t: &Table{index: make(map[any]int)}}
+	return &tableBuilder{t: Table{index: make(map[any]int)}}
 }
 
-// append adds a positional field, which receives the next array index.
-func (tb *tableBuilder) append(value any) {
-	tb.next++
-	tb.t.set(int64(tb.next), value)
+// positional adds the positional field with the given array index.
+func (tb *tableBuilder) positional(index int64, value any) {
+	tb.t.set(index, value)
 }
 
-// set stores value under key, replacing any previous value for the same key
-// while keeping the original insertion position.
-func (tb *tableBuilder) set(key, value any) {
+// keyed stores value under an already canonicalized key, replacing any previous
+// value for the same key while keeping the original insertion position.
+func (tb *tableBuilder) keyed(key, value any) {
 	tb.t.set(key, value)
 }
 
-func (tb *tableBuilder) build() *Table {
-	return tb.t
+// result returns the finished table.
+func (tb *tableBuilder) result() any {
+	return &tb.t
 }
 
 func (t *Table) set(key, value any) {
@@ -83,6 +86,17 @@ func (t *Table) Entries() []Entry {
 	out := make([]Entry, len(t.entries))
 	copy(out, t.entries)
 	return out
+}
+
+// entriesNoCopy returns the live entry slice without copying. It is for
+// internal callers that only read the entries, such as the encoder; Entries is
+// the exported accessor, which copies so that a caller cannot see later
+// changes to the table through the slice it was handed.
+func (t *Table) entriesNoCopy() []Entry {
+	if t == nil {
+		return nil
+	}
+	return t.entries
 }
 
 // Get returns the value stored under key.

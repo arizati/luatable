@@ -2,6 +2,7 @@ package luatable
 
 import (
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -208,6 +209,43 @@ func FuzzParseModule(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, s string) {
 		_, _ = ParseModule(s)
+	})
+}
+
+// FuzzParseMatchesParseTable checks the invariant that makes the generic parse
+// path safe: for every input, Parse produces exactly what the rich
+// representation converts to, and when the input does not parse, both paths
+// report the same error. The comparison runs in strict and in lenient mode, and
+// it is the structural one from generic_test.go, so even a table holding two
+// keys with the same spelling is compared everywhere except in the values of
+// those two keys.
+func FuzzParseMatchesParseTable(f *testing.F) {
+	for _, s := range fuzzSeeds {
+		f.Add(s)
+	}
+	f.Add(`{[1] = "a", ["1"] = "b", [1] = "c"}`)
+	f.Add(`{1, 2, [2] = "b"}`)
+
+	f.Fuzz(func(t *testing.T, s string) {
+		for _, lenient := range []bool{false, true} {
+			var p Parser
+			p.Lenient = lenient
+
+			rich, errRich := p.ParseTable(s)
+			generic, errGeneric := p.Parse(s)
+
+			if errRich != nil || errGeneric != nil {
+				if errRich == nil || errGeneric == nil {
+					t.Fatalf("one path failed and the other did not: ParseTable %v; Parse %v", errRich, errGeneric)
+				}
+				if errRich.Error() != errGeneric.Error() {
+					t.Fatalf("the paths report different errors: ParseTable %q; Parse %q", errRich, errGeneric)
+				}
+				return
+			}
+
+			assertMatchesRich(t, "lenient="+strconv.FormatBool(lenient)+" "+s, generic, rich)
+		}
 	})
 }
 

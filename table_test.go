@@ -202,6 +202,64 @@ func TestTableIntegerValuedFloatKeyIsNormalized(t *testing.T) {
 	}
 }
 
+// TestTableKeepsKeysWithTheSameSpellingApart pins the contract that motivates
+// ParseTable: keys of different types are different keys even when they spell
+// the same, so a *Table keeps [1] and ["1"] apart while the generic map
+// representation, which can only hold string keys, has to collapse them.
+//
+// It is the counterpart of TestTableIntegerValuedFloatKeyIsNormalized: there
+// two spellings are one key, here two keys share one spelling.
+func TestTableKeepsKeysWithTheSameSpellingApart(t *testing.T) {
+	const src = `{ [1] = "int", ["1"] = "str", [2.5] = "float", ["2.5"] = "str-float", [true] = "bool", ["true"] = "str-bool" }`
+
+	tbl := MustParseTable(src)
+
+	want := []Entry{
+		{Key: int64(1), Value: "int"},
+		{Key: "1", Value: "str"},
+		{Key: 2.5, Value: "float"},
+		{Key: "2.5", Value: "str-float"},
+		{Key: true, Value: "bool"},
+		{Key: "true", Value: "str-bool"},
+	}
+	if got := tbl.Entries(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected entries;\n got %#v\nwant %#v", got, want)
+	}
+
+	// Each lookup addresses exactly one of the keys that share a spelling,
+	// whichever Go type the caller uses for it.
+	lookups := []struct {
+		key  any
+		want string
+	}{
+		{1, "int"},
+		{int64(1), "int"},
+		{"1", "str"},
+		{2.5, "float"},
+		{"2.5", "str-float"},
+		{true, "bool"},
+		{"true", "str-bool"},
+	}
+	for _, tc := range lookups {
+		got, ok := tbl.Get(tc.key)
+		if !ok || got != tc.want {
+			t.Fatalf("Get(%#v) = (%#v, %v); want (%q, true)", tc.key, got, ok, tc.want)
+		}
+	}
+
+	// The generic representation has room for one key per spelling, and keeps
+	// the value of the last field in source order. See
+	// TestParseGenericCollidingKeys for the reassignment case.
+	generic, err := Parse(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	wantGeneric := map[string]any{"1": "str", "2.5": "str-float", "true": "str-bool"}
+	if !reflect.DeepEqual(generic, wantGeneric) {
+		t.Fatalf("unexpected generic value; got %#v; want %#v", generic, wantGeneric)
+	}
+}
+
 func TestTableNestedValuesAreRichTables(t *testing.T) {
 	tbl := MustParseTable(`{a = {1, 2}, b = {c = 3}}`)
 

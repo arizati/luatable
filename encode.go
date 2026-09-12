@@ -32,15 +32,128 @@ func (e *EncodeError) Error() string {
 	return "luatable: encode error at " + e.Path + ": " + e.Msg
 }
 
-func newEncodeError(path, format string, args ...any) *EncodeError {
-	return &EncodeError{Msg: fmt.Sprintf(format, args...), Path: path}
+func newEncodeError(path pathStack, format string, args ...any) *EncodeError {
+	return &EncodeError{Msg: fmt.Sprintf(format, args...), Path: path.String()}
+}
+
+// pathKind describes one step of a value's position inside the encoded data.
+type pathKind uint8
+
+const (
+	pathNone  pathKind = iota // no step: the root, or a key that cannot be written
+	pathKey                   // a string key: ".name" or `["max-connections"]`
+	pathIndex                 // an integer index or key: "[3]"
+	pathFloat                 // a float key: "[1.5]"
+	pathBool                  // a boolean key: "[true]"
+)
+
+// pathSeg is one step of the path to a value. The key is kept as it was seen,
+// not as text, so that walking into a field costs no allocation: the path is
+// rendered only when an error is reported.
+//
+// Every kind but pathKey stores its value in num: an index uses it directly, a
+// float stores its bit pattern and a boolean stores 0 or 1. Keeping the struct
+// at four words halves the memory a deeply nested value needs for its steps.
+type pathSeg struct {
+	kind pathKind
+	text string
+	num  int64
+}
+
+// pathStack is the path to the value being encoded. Each field pushes one step
+// before descending and pops it right after, so the backing array is reused by
+// every sibling and no step allocates: a whole encode needs no allocation once
+// the stack has grown to the depth of the value.
+type pathStack []pathSeg
+
+// push appends one step.
+func (p pathStack) push(seg pathSeg) pathStack {
+	return append(p, seg)
+}
+
+// pop removes the last step. It is called after every push, including when the
+// recursive call failed, so that the stack stays consistent.
+func (p pathStack) pop() pathStack {
+	return p[:len(p)-1]
+}
+
+// key pushes a string key, which is rendered as ".name" when it is a Lua
+// identifier and as `["..."]` otherwise.
+func (p pathStack) key(k string) pathStack {
+	return p.push(pathSeg{kind: pathKey, text: k})
+}
+
+// index pushes an integer index or key, rendered as "[n]".
+func (p pathStack) index(i int64) pathStack {
+	return p.push(pathSeg{kind: pathIndex, num: i})
+}
+
+// entry pushes the key of a Table entry. A key the encoder cannot write is
+// recorded as an empty step, which renders as nothing, so that every field
+// pushes exactly one step and can pop unconditionally.
+func (p pathStack) entry(key any) pathStack {
+	switch k := key.(type) {
+	case string:
+		return p.key(k)
+	case int64:
+		return p.index(k)
+	case float64:
+		return p.push(pathSeg{kind: pathFloat, num: int64(math.Float64bits(k))})
+	case bool:
+		if k {
+			return p.push(pathSeg{kind: pathBool, num: 1})
+		}
+		return p.push(pathSeg{kind: pathBool})
+	default:
+		return p.push(pathSeg{})
+	}
+}
+
+// String renders the path the way EncodeError.Path has always looked, for
+// example ".servers[0].port" or `["max-connections"]`. It is called only while
+// reporting an error.
+func (p pathStack) String() string {
+	if len(p) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, seg := range p {
+		switch seg.kind {
+		case pathNone:
+			// Nothing to render: a key that cannot be written.
+		case pathKey:
+			if isIdentifier(seg.text) {
+				b.WriteByte('.')
+				b.WriteString(seg.text)
+			} else {
+				b.WriteByte('[')
+				b.WriteString(strconv.Quote(seg.text))
+				b.WriteByte(']')
+			}
+		case pathIndex:
+			b.WriteByte('[')
+			b.WriteString(strconv.FormatInt(seg.num, 10))
+			b.WriteByte(']')
+		case pathFloat:
+			b.WriteByte('[')
+			b.WriteString(strconv.FormatFloat(math.Float64frombits(uint64(seg.num)), 'g', -1, 64))
+			b.WriteByte(']')
+		case pathBool:
+			b.WriteByte('[')
+			b.WriteString(strconv.FormatBool(seg.num != 0))
+			b.WriteByte(']')
+		}
+	}
+	return b.String()
 }
 
 // Encoder encodes Go values into Lua table literals.
 //
 // The zero value is ready to use: it writes compact, deterministic output that
-// Parse reads back without error. An Encoder may be re-used, but must not be
-// used from concurrent goroutines.
+// Parse reads back without error. An Encoder may be re-used — it keeps the
+// scratch space that encoding needs, so re-use avoids allocating it again — but
+// it must not be used from concurrent goroutines.
 //
 // The encoder accepts the same value domain that Parse produces (nil, bool,
 // int64, float64, string, []any, map[string]any and *Table), plus a few
@@ -87,6 +200,11 @@ type Encoder struct {
 	// the parser rejects, and it may be code, such as a call to loadstring.
 	// Use it only for text that is trusted.
 	EmitSkipped bool
+
+	// keyLists keeps one reusable key slice per nesting depth, so that an
+	// encoder used more than once does not allocate a fresh list for every
+	// map with more than eight keys. It is scratch space, not state.
+	keyLists [][]string
 }
 
 // Marshal encodes v as a compact Lua table literal.
@@ -127,13 +245,48 @@ func (e *Encoder) MarshalModule(v any) ([]byte, error) {
 	return e.writeTableValue(v, true)
 }
 
+// AppendMarshal appends the compact Lua table literal for v to dst and returns
+// the extended slice. It is Marshal with a caller-provided buffer: reusing one
+// slice across calls reuses its capacity instead of growing a fresh buffer, and
+// the encoder reuses the key lists it builds for large maps, so a hot loop
+// stops allocating entirely once both are large enough.
+//
+//	buf := make([]byte, 0, 4096)
+//	for _, v := range values {
+//		var err error
+//		buf, err = enc.AppendMarshal(buf[:0], v)
+//		if err != nil {
+//			return err
+//		}
+//		use(buf)
+//	}
+//
+// When v cannot be encoded, AppendMarshal returns dst unchanged together with
+// the *EncodeError: the bytes dst already holds are never modified.
+func (e *Encoder) AppendMarshal(dst []byte, v any) ([]byte, error) {
+	return e.appendTableValue(dst, v, false)
+}
+
 func (e *Encoder) writeTableValue(v any, module bool) ([]byte, error) {
-	var buf bytes.Buffer
+	return e.appendTableValue(nil, v, module)
+}
+
+// appendTableValue appends the encoded form of v to dst, prefixing "return "
+// when module is set. Writing goes through a bytes.Buffer that starts on dst,
+// so the caller's spare capacity is used before anything is allocated.
+func (e *Encoder) appendTableValue(dst []byte, v any, module bool) ([]byte, error) {
+	buf := bytes.NewBuffer(dst)
 	if module {
 		buf.WriteString("return ")
 	}
-	if err := e.encode(&buf, v, 0, ""); err != nil {
-		return nil, err
+
+	// The path stack starts in an array on the stack; it only reaches the
+	// heap for a value nested deeper than the array is long.
+	var pathBuf [16]pathSeg
+	if err := e.encode(buf, v, 0, pathBuf[:0]); err != nil {
+		// The bytes written so far sit past len(dst), so returning dst
+		// unchanged shows the caller nothing of the partial output.
+		return dst, err
 	}
 	if module {
 		buf.WriteByte('\n')
@@ -149,7 +302,7 @@ func (e *Encoder) maxDepth() int {
 }
 
 // encode writes v at the given nesting depth. The root value is at depth 0.
-func (e *Encoder) encode(buf *bytes.Buffer, v any, depth int, path string) error {
+func (e *Encoder) encode(buf *bytes.Buffer, v any, depth int, path pathStack) error {
 	switch x := v.(type) {
 	case nil:
 		buf.WriteString("nil")
@@ -226,7 +379,7 @@ func (e *Encoder) encode(buf *bytes.Buffer, v any, depth int, path string) error
 // be code or text that is not valid Lua, so it has to be an explicit choice.
 // An empty text is still rejected, because it would leave a hole in the output
 // such as "{a = }", which parses nowhere.
-func (e *Encoder) writeSkipped(buf *bytes.Buffer, s Skipped, path string) error {
+func (e *Encoder) writeSkipped(buf *bytes.Buffer, s Skipped, path pathStack) error {
 	if !e.EmitSkipped {
 		return newEncodeError(path,
 			"value %s was skipped by the lenient parser and cannot be encoded; set Encoder.EmitSkipped to write its text back", s)
@@ -240,7 +393,7 @@ func (e *Encoder) writeSkipped(buf *bytes.Buffer, s Skipped, path string) error 
 
 // writeUnsigned writes an unsigned value, rejecting values that do not fit
 // into an int64 so that the literal still parses back as an integer.
-func (e *Encoder) writeUnsigned(buf *bytes.Buffer, u uint64, path string) error {
+func (e *Encoder) writeUnsigned(buf *bytes.Buffer, u uint64, path pathStack) error {
 	if u > math.MaxInt64 {
 		return newEncodeError(path, "unsigned value %d does not fit into int64", u)
 	}
@@ -264,91 +417,107 @@ func (e *Encoder) writeUnsigned(buf *bytes.Buffer, u uint64, path string) error 
 // have no integer subtype at all. Getting the value right everywhere is worth
 // more than preserving the type, so the decimal form is used.
 func writeInt(buf *bytes.Buffer, n int64) {
-	buf.WriteString(strconv.FormatInt(n, 10))
+	// AppendInt writes into a stack buffer, so no string is allocated for
+	// the literal.
+	var scratch [24]byte
+	buf.Write(strconv.AppendInt(scratch[:0], n, 10))
 }
 
 // writeFloat writes a floating point literal in a form that Parse converts
 // back to a float64 rather than to an int64.
-func writeFloat(buf *bytes.Buffer, f float64, bitSize int, path string) error {
+func writeFloat(buf *bytes.Buffer, f float64, bitSize int, path pathStack) error {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return newEncodeError(path, "%v cannot be represented in a Lua table literal", f)
 	}
 
-	s := strconv.FormatFloat(f, 'g', -1, bitSize)
-	if !strings.ContainsAny(s, ".eE") {
+	// AppendFloat writes into a stack buffer, so no string is allocated for
+	// the literal; 32 bytes cover the longest "%g" rendering of a float64.
+	var scratch [32]byte
+	s := strconv.AppendFloat(scratch[:0], f, 'g', -1, bitSize)
+	if !bytes.ContainsAny(s, ".eE") {
 		// The literal looks like an integer; force the float form so that
 		// parsing it back preserves the type.
-		s += ".0"
+		s = append(s, '.', '0')
 	}
-	buf.WriteString(s)
+	buf.Write(s)
 	return nil
+}
+
+// isVerbatimByte reports whether c can be copied into a short string without
+// escaping: printable ASCII other than the quote and the backslash, which have
+// a one-character escape of their own.
+func isVerbatimByte(c byte) bool {
+	return c >= 0x20 && c < 0x7F && c != '"' && c != '\\'
 }
 
 // writeString writes s as a double-quoted Lua short string. It is the exact
 // inverse of decodeShortString: Parse can read the result back byte for byte.
+//
+// Verbatim text is copied in runs instead of byte by byte: a string without
+// escapes costs one copy, and a run of non-ASCII text one copy per run rather
+// than one per rune.
 func writeString(buf *bytes.Buffer, s string) {
 	buf.WriteByte('"')
 
 	for i := 0; i < len(s); {
+		// Find the longest run that can be written as it is. The run ends at
+		// the first byte that has an escape or is not part of a well-formed
+		// UTF-8 sequence, which the switch below then handles alone.
+		j := i
+		for j < len(s) {
+			c := s[j]
+			if isVerbatimByte(c) {
+				j++
+				continue
+			}
+			if c >= utf8.RuneSelf {
+				if r, size := utf8.DecodeRuneInString(s[j:]); r != utf8.RuneError || size > 1 {
+					j += size
+					continue
+				}
+			}
+			break
+		}
+		if n := j - i; n > 0 {
+			// A short run is cheaper to write byte by byte than through a
+			// call that has to reserve capacity; escaped text is mostly short
+			// runs, and it must not pay for the long-run fast path.
+			if n < 8 {
+				for k := i; k < j; k++ {
+					buf.WriteByte(s[k])
+				}
+			} else {
+				buf.WriteString(s[i:j])
+			}
+			i = j
+			continue
+		}
+
 		c := s[i]
 		switch c {
 		case '"':
 			buf.WriteString(`\"`)
-			i++
-			continue
 		case '\\':
 			buf.WriteString(`\\`)
-			i++
-			continue
 		case '\a':
 			buf.WriteString(`\a`)
-			i++
-			continue
 		case '\b':
 			buf.WriteString(`\b`)
-			i++
-			continue
 		case '\f':
 			buf.WriteString(`\f`)
-			i++
-			continue
 		case '\n':
 			buf.WriteString(`\n`)
-			i++
-			continue
 		case '\r':
 			buf.WriteString(`\r`)
-			i++
-			continue
 		case '\t':
 			buf.WriteString(`\t`)
-			i++
-			continue
 		case '\v':
 			buf.WriteString(`\v`)
-			i++
-			continue
+		default:
+			// Control characters, DEL and bytes that are not part of a
+			// well-formed UTF-8 sequence become decimal escapes.
+			writeDecimalEscape(buf, c)
 		}
-
-		if c >= 0x20 && c < 0x7F {
-			// Printable ASCII, written verbatim.
-			buf.WriteByte(c)
-			i++
-			continue
-		}
-
-		// Keep well-formed UTF-8 sequences as they are so that the output
-		// stays readable; everything else (control characters and invalid
-		// UTF-8 bytes) becomes a decimal escape.
-		if c >= utf8.RuneSelf {
-			if r, size := utf8.DecodeRuneInString(s[i:]); r != utf8.RuneError || size > 1 {
-				buf.WriteString(s[i : i+size])
-				i += size
-				continue
-			}
-		}
-
-		writeDecimalEscape(buf, c)
 		i++
 	}
 
@@ -365,7 +534,7 @@ func writeDecimalEscape(buf *bytes.Buffer, c byte) {
 	buf.WriteByte('0' + c%10)
 }
 
-func (e *Encoder) encodeArray(buf *bytes.Buffer, a []any, depth int, path string) error {
+func (e *Encoder) encodeArray(buf *bytes.Buffer, a []any, depth int, path pathStack) error {
 	if len(a) == 0 {
 		buf.WriteString("{}")
 		return nil
@@ -380,7 +549,10 @@ func (e *Encoder) encodeArray(buf *bytes.Buffer, a []any, depth int, path string
 			buf.WriteByte(',')
 		}
 		e.indentln(buf, depth+1)
-		if err := e.encode(buf, v, depth+1, indexPath(path, i)); err != nil {
+		path = path.index(int64(i))
+		err := e.encode(buf, v, depth+1, path)
+		path = path.pop()
+		if err != nil {
 			return err
 		}
 	}
@@ -388,7 +560,7 @@ func (e *Encoder) encodeArray(buf *bytes.Buffer, a []any, depth int, path string
 	return nil
 }
 
-func (e *Encoder) encodeMap(buf *bytes.Buffer, m map[string]any, depth int, path string) error {
+func (e *Encoder) encodeMap(buf *bytes.Buffer, m map[string]any, depth int, path pathStack) error {
 	if len(m) == 0 {
 		buf.WriteString("{}")
 		return nil
@@ -397,12 +569,20 @@ func (e *Encoder) encodeMap(buf *bytes.Buffer, m map[string]any, depth int, path
 		return err
 	}
 
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	if !e.UnsortedKeys {
-		slices.Sort(keys)
+	// The common table is small; a stack array keeps its key list off the
+	// heap. A larger map reuses the list the encoder keeps for this depth, so
+	// encoding repeatedly with the same encoder does not allocate either.
+	var scratch [8]string
+	keys := scratch[:0]
+	if len(m) > len(scratch) {
+		keys = e.mapKeys(depth, m)
+	} else {
+		for k := range m {
+			keys = append(keys, k)
+		}
+		if !e.UnsortedKeys {
+			slices.Sort(keys)
+		}
 	}
 
 	buf.WriteByte('{')
@@ -413,7 +593,10 @@ func (e *Encoder) encodeMap(buf *bytes.Buffer, m map[string]any, depth int, path
 		e.indentln(buf, depth+1)
 		writeStringKey(buf, k)
 		buf.WriteString(" = ")
-		if err := e.encode(buf, m[k], depth+1, keyPath(path, k)); err != nil {
+		path = path.key(k)
+		err := e.encode(buf, m[k], depth+1, path)
+		path = path.pop()
+		if err != nil {
 			return err
 		}
 	}
@@ -421,8 +604,34 @@ func (e *Encoder) encodeMap(buf *bytes.Buffer, m map[string]any, depth int, path
 	return nil
 }
 
-func (e *Encoder) encodeTable(buf *bytes.Buffer, t *Table, depth int, path string) error {
-	entries := t.Entries()
+// mapKeys returns the sorted key list of m, reusing the list this encoder kept
+// for the same nesting depth. The result is valid until the next call at that
+// depth, which is all the caller needs: a map's keys are used while its own
+// fields are encoded, and nested maps work at a deeper level.
+func (e *Encoder) mapKeys(depth int, m map[string]any) []string {
+	for len(e.keyLists) <= depth {
+		e.keyLists = append(e.keyLists, nil)
+	}
+
+	keys := e.keyLists[depth][:0]
+	if cap(keys) < len(m) {
+		keys = make([]string, 0, len(m))
+	}
+	for k := range m {
+		keys = append(keys, k)
+	}
+	e.keyLists[depth] = keys[:0]
+
+	if !e.UnsortedKeys {
+		slices.Sort(keys)
+	}
+	return keys
+}
+
+func (e *Encoder) encodeTable(buf *bytes.Buffer, t *Table, depth int, path pathStack) error {
+	// The encoder only reads the entries, so the copy Entries makes for
+	// callers is not needed here.
+	entries := t.entriesNoCopy()
 	if len(entries) == 0 {
 		buf.WriteString("{}")
 		return nil
@@ -444,7 +653,10 @@ func (e *Encoder) encodeTable(buf *bytes.Buffer, t *Table, depth int, path strin
 				buf.WriteByte(',')
 			}
 			e.indentln(buf, depth+1)
-			if err := e.encode(buf, v, depth+1, indexPath(path, i+1)); err != nil {
+			path = path.index(int64(i + 1))
+			err := e.encode(buf, v, depth+1, path)
+			path = path.pop()
+			if err != nil {
 				return err
 			}
 		}
@@ -458,12 +670,14 @@ func (e *Encoder) encodeTable(buf *bytes.Buffer, t *Table, depth int, path strin
 			buf.WriteByte(',')
 		}
 		e.indentln(buf, depth+1)
-		valuePath := entryPath(path, entry.Key)
-		if err := writeEntryKey(buf, entry.Key, valuePath); err != nil {
+		path = path.entry(entry.Key)
+		if err := writeEntryKey(buf, entry.Key, path); err != nil {
 			return err
 		}
 		buf.WriteString(" = ")
-		if err := e.encode(buf, entry.Value, depth+1, valuePath); err != nil {
+		err := e.encode(buf, entry.Value, depth+1, path)
+		path = path.pop()
+		if err != nil {
 			return err
 		}
 	}
@@ -495,7 +709,7 @@ func (e *Encoder) indentln(buf *bytes.Buffer, depth int) {
 
 // checkDepth reports an error when entering one more container would exceed
 // the configured maximum depth.
-func (e *Encoder) checkDepth(depth int, path string) error {
+func (e *Encoder) checkDepth(depth int, path pathStack) error {
 	if maxDepth := e.maxDepth(); depth+1 > maxDepth {
 		return newEncodeError(path, "nesting depth exceeds the maximum of %d", maxDepth)
 	}
@@ -515,7 +729,7 @@ func writeStringKey(buf *bytes.Buffer, key string) {
 }
 
 // writeEntryKey writes a non-string table key, always in bracket form.
-func writeEntryKey(buf *bytes.Buffer, key any, path string) error {
+func writeEntryKey(buf *bytes.Buffer, key any, path pathStack) error {
 	switch k := key.(type) {
 	case string:
 		writeStringKey(buf, k)
@@ -539,32 +753,6 @@ func writeEntryKey(buf *bytes.Buffer, key any, path string) error {
 		return nil
 	default:
 		return newEncodeError(path, "unsupported table key type %T", key)
-	}
-}
-
-func indexPath(path string, i int) string {
-	return path + "[" + strconv.Itoa(i) + "]"
-}
-
-func keyPath(path, key string) string {
-	if isIdentifier(key) {
-		return path + "." + key
-	}
-	return path + "[" + strconv.Quote(key) + "]"
-}
-
-func entryPath(path string, key any) string {
-	switch k := key.(type) {
-	case string:
-		return keyPath(path, k)
-	case int64:
-		return path + "[" + strconv.FormatInt(k, 10) + "]"
-	case float64:
-		return path + "[" + strconv.FormatFloat(k, 'g', -1, 64) + "]"
-	case bool:
-		return path + "[" + strconv.FormatBool(k) + "]"
-	default:
-		return path
 	}
 }
 

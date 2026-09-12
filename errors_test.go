@@ -101,7 +101,7 @@ func TestParseErrors(t *testing.T) {
 		{
 			name:     "table as table key",
 			src:      "{[{}] = 1}",
-			wantMsg:  "unsupported table key type *luatable.Table",
+			wantMsg:  "a table cannot be used as a table key",
 			wantLine: 1,
 			wantCol:  2,
 		},
@@ -314,13 +314,27 @@ func TestPositionAt(t *testing.T) {
 	}
 }
 
+// TestParseErrorForUnsupportedKeyTypeReportsTableType pins the message of a
+// table used as a table key. It names the Lua kind rather than the Go type,
+// because the Go type of a nested table depends on the representation the
+// parser was asked for (a *Table or a map[string]any).
 func TestParseErrorForUnsupportedKeyTypeReportsTableType(t *testing.T) {
-	_, err := Parse("{[{}] = 1}")
-	if err == nil {
-		t.Fatal("expecting an error")
-	}
-	if !strings.Contains(err.Error(), "*luatable.Table") {
-		t.Fatalf("unexpected error message: %s", err)
+	for _, parse := range []struct {
+		name string
+		call func(string) error
+	}{
+		{"Parse", func(s string) error { _, err := Parse(s); return err }},
+		{"ParseTable", func(s string) error { _, err := ParseTable(s); return err }},
+	} {
+		t.Run(parse.name, func(t *testing.T) {
+			err := parse.call("{[{}] = 1}")
+			if err == nil {
+				t.Fatal("expecting an error")
+			}
+			if !strings.Contains(err.Error(), "a table cannot be used as a table key") {
+				t.Fatalf("unexpected error message: %s", err)
+			}
+		})
 	}
 }
 

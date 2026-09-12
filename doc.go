@@ -42,6 +42,13 @@ For full fidelity (exact key types and insertion order) use Parser.ParseTable
 and work with the returned *Table; Table.Interface converts it back into the
 generic representation described above.
 
+A numeric key and a text key with the same spelling ([1] and ["1"]) collapse
+into one map key. When such keys are also assigned more than once, the generic
+representation keeps the value of the last field in the source; this is the one
+corner where it can differ from Table.Interface, which resolves the collapse by
+entry order. Parse fills the generic representation directly, so it builds no
+*Table on the way.
+
 # Supported syntax
 
   - array part, hash part, and mixed tables

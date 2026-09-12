@@ -134,6 +134,11 @@ for _, entry := range table.Entries() {
 Use `luatable.ToInterface(v)` (or `Table.Interface`) to recursively convert a
 rich table into the generic representation.
 
+`Parse` does not build a `*Table` and then convert it: it fills the generic
+representation directly, so it is the cheaper of the two and allocates no
+intermediate table (see `BenchmarkParse` against `BenchmarkParseTable`). Reach
+for `ParseTable` when exact key types or entry order are needed.
+
 ## Values that are not literals
 
 A Lua data file sometimes mixes data with code: a dumped table may hold a
@@ -248,6 +253,7 @@ Variants and options:
 | `MarshalIndent(v, "  ")` | indented, one field per line |
 | `MarshalModule(v)` | `return {name = "demo"}` + newline, the counterpart of `ParseModule` |
 | `MarshalModuleIndent(v, "\t")` | indented module file |
+| `Encoder.AppendMarshal(dst, v)` | appends the compact form to `dst`, so the caller can reuse one buffer |
 
 `Encoder` carries the same options, with defaults chosen so that the zero value
 is useful:
@@ -259,6 +265,14 @@ is useful:
 | `TrailingComma` | `false` | write a `,` after the last field |
 | `UnsortedKeys` | `false` | `false` sorts map keys, keeping output reproducible |
 | `EmitSkipped` | `false` | write the raw text of a `Skipped` value back instead of rejecting it |
+
+`Encoder.AppendMarshal` is the allocation-free path for callers that encode
+repeatedly: reslicing one buffer to zero length before every call
+(`buf, err = enc.AppendMarshal(buf[:0], v)`) reuses its capacity, and an
+`Encoder` reuses the key lists it builds for maps with more than eight keys.
+Once the buffer is large enough, encoding a value of the same shape allocates
+nothing at all. A failed call returns `dst` unchanged, and the bytes it already
+holds are never modified.
 
 Values that cannot be represented — `struct`, `func`, `chan`, `NaN`, `±Inf`, a
 `Skipped` value, or a `uint64` that does not fit into `int64` — are rejected with
@@ -377,7 +391,9 @@ use an internal pool and are convenient for one-off parses.
 * No metatables, functions, coroutines or variable evaluation.
 * In the generic map representation a numeric key and a text key with the same
   spelling collide (`[1]` and `["1"]` both become `"1"`). Use `ParseTable` when
-  that distinction matters.
+  that distinction matters. If such keys are also assigned more than once, the
+  generic representation keeps the value of the last such field in the source,
+  while the map derived from a `*Table` resolves the collapse by entry order.
 * Columns are counted in bytes, not Unicode code points. A line break is LF,
   CR, CRLF or LFCR, as in Lua.
 * Nesting depth is limited by `Parser.MaxDepth` (default `DefaultMaxDepth`, 300)
@@ -412,6 +428,7 @@ luatable/
 ├── string.go               short and long string decoding
 ├── table.go                Table / Entry and generic-structure conversion
 ├── parser.go               recursive-descent parser and depth control
+├── sink.go                 field sinks: the rich *Table or the generic value
 ├── lenient.go              lenient mode: Skipped values and expression skipping
 ├── selection.go            path lookup (Get, GetAs, GetSlice, Table.GetPath)
 ├── encode.go               Lua table generator (Marshal, Encoder, EncodeError)
