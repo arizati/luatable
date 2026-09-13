@@ -428,7 +428,7 @@ luatable/
 ├── string.go               short and long string decoding
 ├── table.go                Table / Entry and generic-structure conversion
 ├── parser.go               recursive-descent parser and depth control
-├── sink.go                 field sinks: the rich *Table or the generic value
+├── sink.go                 the generic table builder ([]any / map[string]any)
 ├── lenient.go              lenient mode: Skipped values and expression skipping
 ├── selection.go            path lookup (Get, GetAs, GetSlice, Table.GetPath)
 ├── encode.go               Lua table generator (Marshal, Encoder, EncodeError)

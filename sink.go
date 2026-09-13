@@ -5,45 +5,10 @@ import (
 	"strconv"
 )
 
-// tableSink receives the fields of one table constructor while it is parsed. It
-// is the seam that lets a single recursive descent feed two representations:
-// the rich *Table that ParseTable returns, or the generic []any /
-// map[string]any that Parse returns.
-//
-// Parsing straight into the generic representation avoids building a *Table
-// that Parse would convert and throw away, so the index map, the ordered entry
-// slice and the table itself are never allocated for it.
-type tableSink interface {
-	// positional stores a positional field under the array index the
-	// constructor gives it (1, 2, ...). The parser numbers the fields, so a
-	// sink only has to store them.
-	positional(index int64, value any)
-
-	// keyed stores a field under a key that normalizeKey has already validated
-	// and canonicalized.
-	keyed(key, value any)
-
-	// result returns the finished table: a *Table for the rich sink, and the
-	// generic representation for the other.
-	result() any
-}
-
-// newTableSink returns a sink that builds the rich representation.
-func newTableSink() tableSink {
-	return newTableBuilder()
-}
-
-// newGenericSink returns a sink that builds the generic representation.
-func newGenericSink() tableSink {
-	return &genericBuilder{
-		allInts: true,
-		lo:      math.MaxInt64,
-		hi:      math.MinInt64,
-	}
-}
-
-// genericBuilder builds the generic representation of a table constructor
-// directly, without going through a *Table.
+// genericBuilder builds the generic representation of one table constructor,
+// the []any or map[string]any that Parse returns, without going through a
+// *Table. The parser holds one by value and resets it for each constructor it
+// opens, so building a table allocates nothing beyond the result itself.
 //
 // While only positional fields have been seen, they are appended to values:
 // their keys are 1..len(values) by construction, so nothing else has to be
@@ -75,6 +40,15 @@ type genericBuilder struct {
 	// assigned: the map exists, so a field was stored, and every key that went
 	// into it was an int64.
 	lo, hi int64
+}
+
+// reset prepares g to collect a new table constructor.
+func (g *genericBuilder) reset() {
+	*g = genericBuilder{
+		allInts: true,
+		lo:      math.MaxInt64,
+		hi:      math.MinInt64,
+	}
 }
 
 func (g *genericBuilder) positional(index int64, value any) {

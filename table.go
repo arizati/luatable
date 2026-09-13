@@ -29,37 +29,10 @@ type Table struct {
 	index   map[any]int
 }
 
-// tableBuilder is the rich tableSink: it accumulates fields in a *Table, so
-// that the exact key types and the insertion order survive.
-//
-// The table is the only thing the builder holds. The index of the next
-// positional field belongs to the constructor, not to the representation, so
-// the parser keeps it; that leaves the builder small enough that building a
-// table costs no more than the table itself.
-type tableBuilder struct {
-	t Table
-}
-
-func newTableBuilder() *tableBuilder {
-	return &tableBuilder{t: Table{index: make(map[any]int)}}
-}
-
-// positional adds the positional field with the given array index.
-func (tb *tableBuilder) positional(index int64, value any) {
-	tb.t.set(index, value)
-}
-
-// keyed stores value under an already canonicalized key, replacing any previous
-// value for the same key while keeping the original insertion position.
-func (tb *tableBuilder) keyed(key, value any) {
-	tb.t.set(key, value)
-}
-
-// result returns the finished table.
-func (tb *tableBuilder) result() any {
-	return &tb.t
-}
-
+// set stores value under key, replacing any previous value for the same key
+// while keeping the original insertion position. The parser uses it for both
+// kinds of field of a rich table: a keyed field passes its canonicalized key
+// and a positional field passes the array index the constructor gave it.
 func (t *Table) set(key, value any) {
 	if i, ok := t.index[key]; ok {
 		t.entries[i].Value = value
