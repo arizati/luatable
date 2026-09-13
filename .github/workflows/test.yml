@@ -73,7 +73,10 @@ jobs:
           go-version-file: go.mod
 
       - name: Fuzz smoke
+        # A sample of the targets: 30s each is the weekly budget. The
+        # differential one keeps Parse and the rich representation in step.
         run: |
           go test -run=XXX -fuzz='^FuzzParse$' -fuzztime=30s .
+          go test -run=XXX -fuzz='^FuzzParseMatchesParseTable$' -fuzztime=30s .
           go test -run=XXX -fuzz='^FuzzParseLenient$' -fuzztime=30s .
           go test -run=XXX -fuzz='^FuzzMarshalString$' -fuzztime=30s .

@@ -19,7 +19,8 @@ package luatable
 // always a *SyntaxError. A missing path is not an error.
 //
 // Parse once with ParseTable and walk with Table.GetPath when several values
-// are needed from the same input.
+// are needed from the same input, or when the input nests deeper than
+// DefaultMaxDepth: Get applies that limit and has no way to raise it.
 func Get(src string, path ...any) (any, bool, error) {
 	value, ok, err := getValue(src, path...)
 	if err != nil || !ok {

@@ -29,8 +29,10 @@ type Parser struct {
 
 	// Lenient keeps parsing when a field cannot be decoded as a literal: the
 	// value is consumed and recorded as a Skipped instead of being rejected.
-	// A key that is not a literal is consumed as well, and its field is
-	// dropped, because a Table key can only be a literal.
+	// A key that a Table cannot hold drops its whole field: the key and its
+	// value are consumed, and nothing is stored. That covers a key that is not
+	// a literal ("[f()] = 1") as well as a literal that cannot be a table key,
+	// such as nil, NaN or an infinity.
 	//
 	// The zero value keeps the strict behaviour, which accepts only literals,
 	// nested tables, unary minus and parenthesized literals. Lenient is a
@@ -516,7 +518,13 @@ func negateNumber(v any) (any, bool) {
 	switch n := v.(type) {
 	case int64:
 		if n == math.MinInt64 {
-			return -float64(n), true
+			// Negating the most negative integer overflows int64. Lua wraps
+			// the result back to math.mininteger, and every version lands on
+			// that same value: 5.3 through 5.5 keep the integer, while 5.1,
+			// 5.2 and LuaJIT read the literal as a float and reach -2^63 as
+			// well. The exact mathematical negation, +2^63, is a number no
+			// implementation produces.
+			return n, true
 		}
 		return -n, true
 	case float64:

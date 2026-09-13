@@ -145,8 +145,9 @@ A Lua data file sometimes mixes data with code: a dumped table may hold a
 function reference or a `loadstring(...)` call next to its numbers and strings.
 `Parser.Lenient` keeps parsing such a file instead of rejecting it. A field value
 that cannot be decoded as a literal or a nested table is consumed and recorded
-as a `Skipped` value, which keeps its place in an array, and a table key that is
-not a literal makes the parser drop the whole field.
+as a `Skipped` value, which keeps its place in an array. A key that a `Table`
+cannot hold drops the whole field, value included: a key that is not a literal,
+or a literal that cannot be a table key, such as `nil`, NaN or an infinity.
 
 ```go
 var p luatable.Parser
@@ -290,6 +291,10 @@ Round-trip guarantees:
   two documented exceptions: an empty slice encodes to `{}` and parses back as an
   empty `map[string]any`, and `math.MinInt64` (see below) comes back as the
   `float64` of the same value.
+* A `float32` is written with float32 precision: `float32(0.1)` becomes `0.1`,
+  which parses back as the `float64` 0.1 rather than as the widened value
+  `0.10000000149011612`. Convert it to a `float64` before encoding to keep the
+  widened value instead.
 * Passing a `*Table` to `Marshal` preserves exact key types and, for non-array
   tables, insertion order. A pure array is written positionally, so its elements
   follow index order `1..n`.

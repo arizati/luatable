@@ -198,10 +198,13 @@ func TestParseReportsMidParseErrors(t *testing.T) {
 
 // TestParseNegatedHexMinimum covers the int64 overflow branch of negateNumber:
 // only the hexadecimal form denotes math.MinInt64 as an int64, because the
-// decimal form is promoted to float64 while it is being scanned.
+// decimal form is promoted to float64 while it is being scanned. Negating it
+// wraps, as it does in Lua, so the value stays math.MinInt64 -- while the
+// decimal form of the same number, -9223372036854775808, comes back as the
+// float64 of that value (see TestMarshalRoundTripGenericValues).
 func TestParseNegatedHexMinimum(t *testing.T) {
 	got := parseGeneric(t, `{-0x8000000000000000}`)
-	want := []any{-float64(math.MinInt64)}
+	want := []any{int64(math.MinInt64)}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected value; got %#v; want %#v", got, want)
 	}

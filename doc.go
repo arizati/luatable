@@ -79,11 +79,13 @@ Variable references, function calls, arithmetic and concatenation expressions
 carries the byte offset, line and column of the offending construct.
 
 Set Parser.Lenient to keep parsing instead. Such a value is consumed and
-recorded as a Skipped, which keeps its position in an array, and a table key
-that is not a literal makes the parser drop the whole field. Lenient mode is a
-recovery mode for data files that mix literals with code; it is not a validation
-mode. Only the errors that no recovery can pass are reported, positioned at the
-value that was being skipped: an unterminated string or comment, a missing field
+recorded as a Skipped, which keeps its position in an array. A key that a Table
+cannot hold drops the whole field together with its value: a key that is not a
+literal, or a literal that cannot be a table key, such as nil, NaN or an
+infinity. Lenient mode is a recovery mode for data files that mix literals with
+code; it is not a validation mode. Only the errors that no recovery can pass are
+reported, positioned at the value that was being skipped: an unterminated string
+or comment, a missing field
 value ("{a = }"), and input that runs out before the value or the constructor
 ends. A value that merely fails to decode as a literal is recorded as a Skipped
 instead, even when it is incomplete ("-" or "(1"). Skipping works on tokens, so

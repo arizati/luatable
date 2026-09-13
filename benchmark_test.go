@@ -146,7 +146,8 @@ func BenchmarkMarshalTable(b *testing.B) {
 
 // BenchmarkMarshalString measures the string writer on the three shapes it has
 // to handle: a long run without escapes, escapes spread through the text, and
-// non-ASCII text, which is copied verbatim one rune at a time.
+// non-ASCII text, which is copied in whole runs; only runs shorter than eight
+// bytes are written byte by byte.
 func BenchmarkMarshalString(b *testing.B) {
 	cases := []struct {
 		name string

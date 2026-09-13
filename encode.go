@@ -168,6 +168,11 @@ func (p pathStack) String() string {
 // the encoder refuses to invent one out of an overflowing literal.
 // math.MinInt64 is written in decimal, which Parse reads back as the float64 of
 // the same value; see writeInt for why the hexadecimal form is not used.
+//
+// A float32 is written with float32 precision: float32(0.1) becomes 0.1, which
+// Parse reads back as the float64 0.1 rather than as the widened value
+// 0.10000000149011612. Converting it to a float64 before encoding keeps the
+// widened value instead.
 type Encoder struct {
 	// Indent is the indentation unit used for multi-line output. The zero
 	// value (an empty string) produces compact single-line output.
@@ -672,6 +677,7 @@ func (e *Encoder) encodeTable(buf *bytes.Buffer, t *Table, depth int, path pathS
 		e.indentln(buf, depth+1)
 		path = path.entry(entry.Key)
 		if err := writeEntryKey(buf, entry.Key, path); err != nil {
+			path = path.pop()
 			return err
 		}
 		buf.WriteString(" = ")

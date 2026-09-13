@@ -83,6 +83,74 @@ func containsInf(v any) bool {
 	return false
 }
 
+// containsMinInt64 reports whether v holds math.MinInt64 as an int64 value
+// anywhere inside it, in either the generic or the rich table representation.
+//
+// Marshal writes that value in decimal, which parses back as a float64 (see
+// writeInt), so a table that holds one does not survive the round trip by
+// value. It is the second documented exception to the round trip invariant,
+// after the infinities that Marshal rejects outright.
+//
+// Only values are inspected. A table key that goes through this int64 does not
+// break the round trip, because reading the decimal literal back normalizes the
+// key to an int64 again, so exempting keys would hide fuzzable input.
+func containsMinInt64(v any) bool {
+	switch x := v.(type) {
+	case int64:
+		return x == math.MinInt64
+	case []any:
+		for _, e := range x {
+			if containsMinInt64(e) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, e := range x {
+			if containsMinInt64(e) {
+				return true
+			}
+		}
+	case *Table:
+		for _, e := range x.entries {
+			if containsMinInt64(e.Value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestContainsMinInt64 pins the guard that FuzzMarshalParseTable relies on. It
+// has to find the value at any depth in either representation, and it must not
+// be widened to "any int64" (an over-broad guard would hide real round trip
+// losses) nor look at keys, which survive the round trip.
+func TestContainsMinInt64(t *testing.T) {
+	cases := []struct {
+		name string
+		v    any
+		want bool
+	}{
+		{"the value itself", int64(math.MinInt64), true},
+		{"in a generic array", []any{int64(1), int64(math.MinInt64)}, true},
+		{"in a generic map", map[string]any{"a": int64(math.MinInt64)}, true},
+		{"nested three levels deep", map[string]any{"a": []any{map[string]any{"b": int64(math.MinInt64)}}}, true},
+		{"in a rich table", MustParseTable(`{a = {0x8000000000000000}}`), true},
+		{"from the negated hexadecimal form", MustParseTable(`{-0x8000000000000000}`), true},
+		{"as a key, not a value", MustParseTable(`{[0x8000000000000000] = 1}`), false},
+		{"next to other integers", []any{int64(math.MaxInt64), int64(-1), int64(0)}, false},
+		{"the float64 of the same magnitude", []any{float64(math.MinInt64)}, false},
+		{"other kinds of value", []any{nil, true, "x", math.Inf(1)}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := containsMinInt64(tc.v); got != tc.want {
+				t.Fatalf("containsMinInt64(%#v) = %v; want %v", tc.v, got, tc.want)
+			}
+		})
+	}
+}
+
 func FuzzParse(f *testing.F) {
 	for _, s := range fuzzSeeds {
 		f.Add(s)
@@ -292,9 +360,11 @@ func FuzzMarshalParseTable(f *testing.F) {
 		if err != nil {
 			return
 		}
-		// Infinities have no Lua literal, so Marshal rejects them; they are
-		// the one documented exception to the round trip invariant.
-		if containsInf(original) {
+		// The two documented exceptions to the round trip invariant:
+		// infinities have no Lua literal and Marshal rejects them, and
+		// math.MinInt64 has no integer literal that every version reads the
+		// same way, so it comes back as the float64 of the same value.
+		if containsInf(original) || containsMinInt64(original) {
 			return
 		}
 
