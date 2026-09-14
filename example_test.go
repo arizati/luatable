@@ -115,6 +115,48 @@ func ExampleGetAs() {
 	// [8080 9090] true
 }
 
+func ExampleAs() {
+	table, err := luatable.ParseTable(`{ name = "demo", port = 8080 }`)
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+
+	// The two results of a lookup are the two arguments of As.
+	port, ok := luatable.As[int64](table.Get("port"))
+	fmt.Println(port, ok)
+
+	name, ok := luatable.As[string](table.Get("name"))
+	fmt.Println(name, ok)
+
+	// A missing field fails the conversion.
+	size, ok := luatable.As[int64](table.Get("size"))
+	fmt.Println(size, ok)
+
+	// Output:
+	// 8080 true
+	// demo true
+	// 0 false
+}
+
+func ExampleAsSlice() {
+	value, err := luatable.Parse(`{ ports = { 8080, 9090 } }`)
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+
+	// The generic representation hands an array out as a []any, and the type
+	// assertion reports whether it is there, which is the flag AsSlice takes.
+	table := value.(map[string]any)
+	raw, ok := table["ports"].([]any)
+	ports, ok := luatable.AsSlice[int64](raw, ok)
+	fmt.Println(ports, ok)
+
+	// Output:
+	// [8080 9090] true
+}
+
 func ExampleParser_lenient() {
 	var p luatable.Parser
 	p.Lenient = true

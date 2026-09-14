@@ -51,7 +51,8 @@ fmt.Println(table["items"].([]any)) // [1 2 3]
 * Precise error positions: byte offset, line and column.
 * Optional rich representation preserving exact key types and insertion order.
 * **Path lookup**: `Get`, `GetAs[T]` and `GetSlice[T]` read one value without
-  converting the whole document.
+  converting the whole document; `As[T]` and `AsSlice[T]` give a value or an
+  array that was already read the type it should have.
 * **Lenient recovery**: `Parser.Lenient` records a value it cannot decode as a
   `Skipped` and keeps the surrounding data, so a file that mixes literals with
   code still loads.
@@ -207,6 +208,8 @@ entry. A field whose value is `nil` is present, so a lookup reports `true` with 
 | `GetAs[T](src, path...)` | a scalar of type `T`: `int64`, `float64`, `string` or `bool` |
 | `GetSlice[T](src, path...)` | a `[]T` from a pure array table, in index order |
 | `Table.GetPath(keys...)` | the rich value from an already parsed `*Table` |
+| `As[T](v, ok)` | a scalar of type `T` from a value that was already read |
+| `AsSlice[T](v, ok)` | a `[]T` from a `[]any` that was already read |
 
 The typed variants follow Lua's number model: an integer is accepted as a
 `float64`, and a `float64` with an integral value in range is accepted as an
@@ -214,10 +217,19 @@ The typed variants follow Lua's number model: an integer is accepted as a
 `GetSlice` converts every element or reports `false`, so it never returns a
 partially converted slice.
 
+`As` applies that conversion to a value a lookup handed out, and takes the two
+results of the lookup as its two arguments, so the pair passes through directly:
+`luatable.As[int64](table.Get("port"))`. A value that was built by hand converts
+too, and an integer is accepted at any Go width in either number direction, so
+`As[int64](m["port"])` works on a `map[string]any` the caller filled itself.
+`AsSlice` does the same for an array:
+it converts the `[]any` that the generic representation and `Table.Array` hand
+out, all or nothing, the way `GetSlice` converts the elements of a table.
+
 A lookup parses in lenient mode and accepts an optional `return` prefix, because
 it is a query rather than a validation step; `Parse` and `ParseTable` remain the
 way to check a whole input. When several values come from the same input, parse
-once and walk:
+once and walk, typing the values with `As`:
 
 ```go
 table, err := luatable.ParseTable(src)
@@ -225,7 +237,7 @@ if err != nil {
     log.Fatal(err)
 }
 host, _ := table.GetPath("servers", 1, "host")
-port, _ := table.GetPath("servers", 1, "port")
+port, ok := luatable.As[int64](table.GetPath("servers", 1, "port"))
 ```
 
 ## Generating Lua tables
@@ -435,7 +447,7 @@ luatable/
 ├── parser.go               recursive-descent parser and depth control
 ├── sink.go                 the generic table builder ([]any / map[string]any)
 ├── lenient.go              lenient mode: Skipped values and expression skipping
-├── selection.go            path lookup (Get, GetAs, GetSlice, Table.GetPath)
+├── selection.go            path lookup (Get, As, AsSlice, GetAs, GetSlice, Table.GetPath)
 ├── encode.go               Lua table generator (Marshal, Encoder, EncodeError)
 ├── pool.go                 ParserPool
 ├── convenience.go          package-level convenience functions

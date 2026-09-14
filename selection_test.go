@@ -2,6 +2,7 @@ package luatable
 
 import (
 	"errors"
+	"math"
 	"reflect"
 	"testing"
 )
@@ -165,6 +166,201 @@ const scalarSrc = `{
 	nothing = nil,
 	skipped = f(),
 }`
+
+func TestAs(t *testing.T) {
+	// The source holds a value the lenient parser records as a Skipped, so it
+	// is parsed the way a lookup parses it.
+	var p Parser
+	p.Lenient = true
+	table, err := p.ParseTable(scalarSrc)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	t.Run("int64", func(t *testing.T) {
+		// The two results of Get are the two arguments of As.
+		if port, ok := As[int64](table.Get("port")); !ok || port != 8080 {
+			t.Fatalf("port = %d, ok = %v; want 8080, true", port, ok)
+		}
+
+		// A float with an integral value converts, as math.tointeger does.
+		if whole, ok := As[int64](table.Get("whole")); !ok || whole != 3 {
+			t.Fatalf("whole = %d, ok = %v; want 3, true", whole, ok)
+		}
+
+		for _, key := range []string{"ratio", "name", "flag", "nothing", "skipped"} {
+			if value, ok := As[int64](table.Get(key)); ok || value != 0 {
+				t.Fatalf("As[int64](%s) = %d, %v; want 0, false", key, value, ok)
+			}
+		}
+
+		// A missing field fails the conversion through the flag the lookup
+		// returned, not through the value, which is nil either way.
+		if value, ok := As[int64](table.Get("nope")); ok || value != 0 {
+			t.Fatalf("As[int64](nope) = %d, %v; want 0, false", value, ok)
+		}
+	})
+
+	t.Run("float64", func(t *testing.T) {
+		if ratio, ok := As[float64](table.Get("ratio")); !ok || ratio != 2.5 {
+			t.Fatalf("ratio = %v, ok = %v; want 2.5, true", ratio, ok)
+		}
+		if port, ok := As[float64](table.Get("port")); !ok || port != 8080 {
+			t.Fatalf("port = %v, ok = %v; want 8080, true", port, ok)
+		}
+		if name, ok := As[float64](table.Get("name")); ok || name != 0 {
+			t.Fatalf("name = %v, ok = %v; want 0, false", name, ok)
+		}
+	})
+
+	t.Run("string and bool", func(t *testing.T) {
+		if name, ok := As[string](table.Get("name")); !ok || name != "demo" {
+			t.Fatalf("name = %q, ok = %v; want \"demo\", true", name, ok)
+		}
+		if flag, ok := As[bool](table.Get("flag")); !ok || !flag {
+			t.Fatalf("flag = %v, ok = %v; want true, true", flag, ok)
+		}
+		if name, ok := As[string](table.Get("port")); ok || name != "" {
+			t.Fatalf("string of a number = %q, ok = %v; want \"\", false", name, ok)
+		}
+		if flag, ok := As[bool](table.Get("nothing")); ok || flag {
+			t.Fatalf("bool of nil = %v, ok = %v; want false, false", flag, ok)
+		}
+	})
+
+	t.Run("NaN and the infinities", func(t *testing.T) {
+		// A table key can never be NaN or infinite, but a value can: they
+		// are float64 values, so they convert to a float64 and never to an
+		// int64.
+		for _, v := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+			if f, ok := As[float64](v, true); !ok || math.Float64bits(f) != math.Float64bits(v) {
+				t.Fatalf("As[float64](%v) = %v, %v; want %v, true", v, f, ok, v)
+			}
+			if n, ok := As[int64](v, true); ok || n != 0 {
+				t.Fatalf("As[int64](%v) = %d, %v; want 0, false", v, n, ok)
+			}
+		}
+	})
+
+	t.Run("a nested table", func(t *testing.T) {
+		nested := MustParseTable(`{ inner = { 1 } }`)
+		if value, ok := As[int64](nested.Get("inner")); ok || value != 0 {
+			t.Fatalf("As[int64](a table) = %d, %v; want 0, false", value, ok)
+		}
+	})
+
+	t.Run("a value built by hand", func(t *testing.T) {
+		// An integer of any Go width converts in either direction, which is
+		// what makes As usable on a map the caller filled itself, where an
+		// integer literal has the type int.
+		for _, value := range []any{int(7), int32(7), uint8(7), uint(7)} {
+			if n, ok := As[int64](value, true); !ok || n != 7 {
+				t.Fatalf("int64 of %T = %d, ok = %v; want 7, true", value, n, ok)
+			}
+			if f, ok := As[float64](value, true); !ok || f != 7 {
+				t.Fatalf("float64 of %T = %v, ok = %v; want 7, true", value, f, ok)
+			}
+		}
+
+		// An integer that does not fit into an int64 is outside the range this
+		// package represents an integer in, so neither direction accepts it.
+		if n, ok := As[int64](uint64(math.MaxUint64), true); ok || n != 0 {
+			t.Fatalf("uint64 max as int64 = %d, ok = %v; want 0, false", n, ok)
+		}
+		if f, ok := As[float64](uint64(math.MaxUint64), true); ok || f != 0 {
+			t.Fatalf("uint64 max as float64 = %v, ok = %v; want 0, false", f, ok)
+		}
+
+		// A float64 is itself whatever its magnitude; only a conversion to an
+		// int64 has to be in range.
+		if f, ok := As[float64](1e300, true); !ok || f != 1e300 {
+			t.Fatalf("1e300 as float64 = %v, ok = %v; want 1e300, true", f, ok)
+		}
+		if n, ok := As[int64](1e300, true); ok || n != 0 {
+			t.Fatalf("1e300 as int64 = %d, ok = %v; want 0, false", n, ok)
+		}
+	})
+
+	t.Run("a failed lookup", func(t *testing.T) {
+		if value, ok := As[string](nil, false); ok || value != "" {
+			t.Fatalf("As[string](nil, false) = %q, %v; want \"\", false", value, ok)
+		}
+	})
+}
+
+func TestAsSlice(t *testing.T) {
+	// The generic representation hands arrays out as []any.
+	value, err := Parse(`{
+		ports = { 8080, 9090 },
+		names = { "a", "b" },
+		mixed = { 1, "x" },
+	}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	generic := value.(map[string]any)
+
+	t.Run("int64", func(t *testing.T) {
+		ports, ok := AsSlice[int64](generic["ports"].([]any), true)
+		if !ok || !reflect.DeepEqual(ports, []int64{8080, 9090}) {
+			t.Fatalf("ports = %v, ok = %v; want [8080 9090], true", ports, ok)
+		}
+	})
+
+	t.Run("float64 from integers", func(t *testing.T) {
+		ports, ok := AsSlice[float64](generic["ports"].([]any), true)
+		if !ok || !reflect.DeepEqual(ports, []float64{8080, 9090}) {
+			t.Fatalf("ports = %v, ok = %v; want [8080 9090], true", ports, ok)
+		}
+	})
+
+	t.Run("strings", func(t *testing.T) {
+		names, ok := AsSlice[string](generic["names"].([]any), true)
+		if !ok || !reflect.DeepEqual(names, []string{"a", "b"}) {
+			t.Fatalf("names = %v, ok = %v; want [a b], true", names, ok)
+		}
+	})
+
+	t.Run("an array of a rich table", func(t *testing.T) {
+		table := MustParseTable(`{ ports = { 8080, 9090 } }`)
+		element, _ := table.Get("ports")
+
+		// Table.Array is the rich route to the []any AsSlice takes.
+		ports, ok := AsSlice[int64](element.(*Table).Array(), true)
+		if !ok || !reflect.DeepEqual(ports, []int64{8080, 9090}) {
+			t.Fatalf("ports = %v, ok = %v; want [8080 9090], true", ports, ok)
+		}
+	})
+
+	t.Run("no conversion", func(t *testing.T) {
+		cases := []struct {
+			name     string
+			elements []any
+			ok       bool
+		}{
+			{"a failed lookup", []any{int64(1)}, false},
+			{"nil, which is not an array", nil, true},
+			{"a mixed array", generic["mixed"].([]any), true},
+			{"a nil element", []any{nil}, true},
+			{"a table element", []any{MustParseTable(`{1}`)}, true},
+			{"a skipped element", []any{Skipped{}}, true},
+		}
+
+		for _, tc := range cases {
+			values, ok := AsSlice[int64](tc.elements, tc.ok)
+			if ok || values != nil {
+				t.Fatalf("%s: AsSlice[int64] = %v, %v; want nil, false", tc.name, values, ok)
+			}
+		}
+	})
+
+	t.Run("an empty array", func(t *testing.T) {
+		values, ok := AsSlice[int64]([]any{}, true)
+		if !ok || values == nil || len(values) != 0 {
+			t.Fatalf("AsSlice[int64]([]) = %v, %v; want [], true", values, ok)
+		}
+	})
+}
 
 func TestGetAs(t *testing.T) {
 	t.Run("int64", func(t *testing.T) {

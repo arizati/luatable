@@ -85,6 +85,38 @@ func BenchmarkTableGetPath(b *testing.B) {
 	}
 }
 
+// BenchmarkAs compares the two ways to read one typed scalar from the same
+// input: GetAs parses it on every call, while As converts a value that a *Table
+// handed out after a single parse. A lookup is for the one-off case; this is
+// what a caller that needs several values pays per value.
+func BenchmarkAs(b *testing.B) {
+	src := benchmarkInputs["medium"]
+
+	var p Parser
+	table, err := p.ParseTable(src)
+	if err != nil {
+		b.Fatalf("unexpected error: %s", err)
+	}
+
+	b.Run("table", func(b *testing.B) {
+		b.SetBytes(int64(len(src)))
+		for b.Loop() {
+			if _, ok := As[string](table.GetPath("item25", "name")); !ok {
+				b.Fatal("the path was not found")
+			}
+		}
+	})
+
+	b.Run("GetAs", func(b *testing.B) {
+		b.SetBytes(int64(len(src)))
+		for b.Loop() {
+			if _, ok, err := GetAs[string](src, "item25", "name"); err != nil || !ok {
+				b.Fatalf("unexpected result: %v, ok = %v", err, ok)
+			}
+		}
+	})
+}
+
 func BenchmarkParseBytes(b *testing.B) {
 	src := []byte(benchmarkInputs["small"])
 

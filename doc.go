@@ -145,8 +145,12 @@ the document:
 
 Each path element is a Lua key, so positional keys start at 1, and the typed
 variants follow Lua's number model: an int64 is accepted as a float64, and a
-float64 with an integral value in range is accepted as an int64. A lookup parses
-in lenient mode (see Parser.Lenient) and accepts an optional "return" prefix,
+float64 with an integral value in range is accepted as an int64. As is the same
+conversion at the value level, and takes the two results of a lookup as its two
+arguments, as in As[int64](table.Get("port")), and AsSlice does it for an array
+of values; the two are what a caller uses to read several typed fields out of a
+table that was parsed once. A lookup parses in
+lenient mode (see Parser.Lenient) and accepts an optional "return" prefix,
 because it is a query rather than a validation step; use Parse or ParseTable to
 check the whole input. When several values are needed from the same input, parse
 once with ParseTable and walk with Table.GetPath.
