@@ -52,6 +52,36 @@ func ExampleParseTable() {
 	// kind=demo
 }
 
+func ExampleTable_Entries() {
+	table, err := luatable.ParseTable(`{
+		name = "demo",
+		port = 8080.0,
+		tags = { "a", "b" },
+	}`)
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+
+	for _, entry := range table.Entries() {
+		// An entry is present by construction, so the presence flag is true.
+		// port is written as a float and converts to an int64, as
+		// math.tointeger does; name is a string and does not convert.
+		if port, ok := luatable.As[int64](entry.Value, true); ok {
+			fmt.Println(entry.Key, port)
+		}
+
+		// A nested table is a *Table, which is walked in turn.
+		if nested, ok := entry.Value.(*luatable.Table); ok {
+			fmt.Println(entry.Key, nested.Array())
+		}
+	}
+
+	// Output:
+	// port 8080
+	// tags [a b]
+}
+
 func ExampleParseModule() {
 	table, err := luatable.ParseModule("return {\n\tdebug = true,\n}")
 	if err != nil {

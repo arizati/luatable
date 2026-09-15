@@ -12,6 +12,10 @@ import (
 // Key is one of string, int64, float64 or bool. Value is one of nil, bool,
 // int64, float64, string, []any, map[string]any, *Table, or Skipped when the
 // parser ran in lenient mode.
+//
+// An entry is present by construction, so a value is read with As or AsSlice
+// passing true as the presence flag, as in As[int64](entry.Value, true), and a
+// nested one is a *Table that can be walked in turn.
 type Entry struct {
 	Key   any
 	Value any
@@ -51,7 +55,8 @@ func (t *Table) Len() int {
 }
 
 // Entries returns a copy of the table entries in insertion order. Values may
-// be nested *Table instances; call ToInterface to obtain a plain Go structure.
+// be nested *Table instances; call ToInterface to obtain a plain Go structure,
+// or As and AsSlice to convert a scalar and an array.
 func (t *Table) Entries() []Entry {
 	if t == nil {
 		return nil

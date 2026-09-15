@@ -119,6 +119,22 @@ for _, entry := range table.Entries() {
 // true (bool) = yes
 ```
 
+An entry holds an exported `Key` and `Value`, both `any`, because a Lua key and a
+Lua value can each be one of several Go types. `As` and `AsSlice` convert a value
+the way a lookup does, and an entry is present by construction, so the presence
+flag is `true`; a nested table is a `*Table` that can be walked in turn:
+
+```go
+for _, entry := range table.Entries() {
+    if name, ok := luatable.As[string](entry.Value, true); ok {
+        fmt.Println(entry.Key, name)
+    }
+    if nested, ok := entry.Value.(*luatable.Table); ok {
+        fmt.Println(entry.Key, nested.Len())
+    }
+}
+```
+
 `Table` API:
 
 | Method | Description |
@@ -126,11 +142,24 @@ for _, entry := range table.Entries() {
 | `Len() int` | number of entries |
 | `Entries() []Entry` | ordered copy of all entries |
 | `Get(key any) (any, bool)` | value for a key (`1` and `1.0` are equivalent) |
+| `GetPath(keys ...any) (any, bool)` | value at a path, walking one key per element |
 | `IsArray() bool` | whether the keys are exactly `1..n` |
 | `Array() []any` | array view, or `nil` when not an array |
 | `Map() map[string]any` | generic map view |
 | `Interface() any` | `[]any` for arrays, `map[string]any` otherwise |
 | `String() string` | Lua-like text, for debugging |
+
+`Get` and `GetPath` hand a value out as an `any`; `luatable.As` and `AsSlice`
+give it the type the caller expects, taking the two results of the lookup as
+their two arguments:
+
+```go
+port, ok := luatable.As[int64](table.GetPath("servers", 1, "port"))
+```
+
+A method cannot carry the type parameter that conversion needs, so a typed read
+is a function on the value rather than a method on the table — there is no
+`Table.GetAs`.
 
 Use `luatable.ToInterface(v)` (or `Table.Interface`) to recursively convert a
 rich table into the generic representation.
@@ -395,6 +424,16 @@ p := pool.Get()
 value, err := p.Parse(src)
 pool.Put(p)
 ```
+
+The default parser is strict, with `DefaultMaxDepth` as the nesting limit. Its
+options are four fields, mirroring the encoder:
+
+| Field | Default | Effect |
+| --- | --- | --- |
+| `MaxDepth` | `0` → `DefaultMaxDepth` | nesting limit, mirrors `Encoder.MaxDepth` |
+| `AllowReturnPrefix` | `false` | accept a leading `return` before the constructor |
+| `StrictKeywords` | `false` | reject a reserved word as a bare key (`{end = 1}`) |
+| `Lenient` | `false` | record a value that is not a literal as a `Skipped` |
 
 The package-level `Parse`, `ParseBytes`, `ParseTable`, `ParseModule`, … helpers
 use an internal pool and are convenient for one-off parses.

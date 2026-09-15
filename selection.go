@@ -54,6 +54,13 @@ type Scalar interface {
 //	value, ok := table.GetPath("servers", 1, "port")
 //	port, ok = luatable.As[int64](value, ok)
 //
+// That second argument is the presence flag of the lookup, not a switch for the
+// conversion: pass the flag a lookup returned, and true for a value that is
+// present by construction, such as Entry.Value while walking Table.Entries. A
+// false flag reports a failed conversion without looking at the value, which is
+// how a zero value that came with ok == false stays a zero value instead of
+// becoming a scalar.
+//
 // The conversion follows Lua's number model, as GetAs does: an int64 is
 // accepted as a float64, and a float64 is accepted as an int64 when it has an
 // integral value in range, which is Lua's math.tointeger; a string and a bool
@@ -83,6 +90,9 @@ func As[T Scalar](v any, ok bool) (T, bool) {
 //
 //	raw, ok := config["ports"].([]any)
 //	ports, ok := luatable.AsSlice[int64](raw, ok)
+//
+// The flag is the one As takes, and a value that no lookup produced passes true,
+// as in AsSlice[int64](table.Array(), true).
 //
 // The conversion is all or nothing, as in GetSlice: the second result is false
 // when the flag is false, when elements is nil, which is how Table.Array
